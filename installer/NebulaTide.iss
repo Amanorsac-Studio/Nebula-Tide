@@ -35,8 +35,12 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription:
 ; standalone app
 Source: "{#BuildDir}\Standalone\Nebula Tide.exe"; DestDir: "{app}"; Flags: ignoreversion
 ; ONE shared sound library (pads, fx, textures, manifest) used by both the app
-; and the VST3 — C:\ProgramData\Nebula Tide\presets
+; and the VST3 — C:\ProgramData\Nebula Tide\presets.
+; Bundled only when the presets folder is present (local builds); CI builds
+; without it produce an app-only installer — the library ships as its own zip.
+#if DirExists("..\presets")
 Source: "..\presets\*"; DestDir: "{commonappdata}\Nebula Tide\presets"; Flags: ignoreversion recursesubdirs createallsubdirs
+#endif
 ; VST3 into the system VST3 folder
 Source: "{#BuildDir}\VST3\Nebula Tide.vst3\*"; DestDir: "{commoncf64}\VST3\Nebula Tide.vst3"; Flags: ignoreversion recursesubdirs createallsubdirs; Tasks: vst3
 

@@ -1,0 +1,133 @@
+name: Build Release (Windows + macOS + iOS)
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+jobs:
+  # ──────────────────────────────────────────────────────────────────────────
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+
+      - name: Build (Standalone + VST3)
+        run: cmake --build build --config Release --target NebulaTide_Standalone NebulaTide_VST3
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $v = "${{ github.ref_name }}".TrimStart("v")
+          if (-not $v.StartsWith("1")) { $v = "1.0.0" }
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /Q /DAppVersion=$v installer\NebulaTide.iss
+
+      - name: Package portable zip
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Compress-Archive -Path "build\NebulaTide_artefacts\Release\Standalone\Nebula Tide.exe","installer\README.txt" -DestinationPath dist\NebulaTide-Windows-App.zip
+          Compress-Archive -Path "build\NebulaTide_artefacts\Release\VST3\Nebula Tide.vst3" -DestinationPath dist\NebulaTide-Windows-VST3.zip
+          Copy-Item installer\output\*.exe dist\
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NebulaTide-Windows
+          path: dist/*
+
+  # ──────────────────────────────────────────────────────────────────────────
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S . -B build-mac -G Xcode
+
+      - name: Build (Standalone + VST3 + AU)
+        run: cmake --build build-mac --config Release --target NebulaTide_Standalone NebulaTide_VST3 NebulaTide_AU
+
+      # Optional codesign + notarize — runs only when signing secrets exist.
+      # Repo secrets: MAC_CERT_P12 (base64), MAC_CERT_PASSWORD, APPLE_ID,
+      # APPLE_TEAM_ID, APPLE_APP_PASSWORD
+      - name: Sign & notarize
+        if: ${{ env.MAC_CERT_P12 != '' }}
+        env:
+          MAC_CERT_P12: ${{ secrets.MAC_CERT_P12 }}
+          MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          echo "$MAC_CERT_P12" | base64 -d > cert.p12
+          security create-keychain -p ci ci.keychain
+          security default-keychain -s ci.keychain
+          security unlock-keychain -p ci ci.keychain
+          security import cert.p12 -k ci.keychain -P "$MAC_CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k ci ci.keychain
+          IDENTITY=$(security find-identity -v -p codesigning ci.keychain | awk -F'"' 'NR==1{print $2}')
+          APP="build-mac/NebulaTide_artefacts/Release/Standalone/Nebula Tide.app"
+          codesign --deep --force --options runtime --sign "$IDENTITY" "$APP"
+          ditto -c -k --keepParent "$APP" NebulaTide-mac.zip
+          xcrun notarytool submit NebulaTide-mac.zip \
+            --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" --wait
+          xcrun stapler staple "$APP"
+
+      - name: Package zips
+        run: |
+          mkdir -p dist
+          cd build-mac/NebulaTide_artefacts/Release
+          ditto -c -k --keepParent "Standalone/Nebula Tide.app" ../../../dist/NebulaTide-macOS-App.zip
+          ditto -c -k --keepParent "VST3/Nebula Tide.vst3" ../../../dist/NebulaTide-macOS-VST3.zip
+          ditto -c -k --keepParent "AU/Nebula Tide.component" ../../../dist/NebulaTide-macOS-AU.zip
+          cp ../../../installer/README.txt ../../../dist/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NebulaTide-macOS
+          path: dist/*
+
+  # ──────────────────────────────────────────────────────────────────────────
+  ios:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure (iOS)
+        run: cmake -S . -B build-ios -G Xcode -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0
+
+      # Unsigned device build proves the iOS code compiles; TestFlight signing
+      # and upload use your existing per-app process.
+      - name: Build (unsigned)
+        run: cmake --build build-ios --config Release --target NebulaTide_Standalone -- CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NebulaTide-iOS-unsigned
+          path: build-ios/NebulaTide_artefacts/Release/Standalone
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # On a version tag, collect everything into a GitHub Release so the zips
+  # have permanent download links for the website.
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: Nebula Tide ${{ github.ref_name }}
+          files: |
+            artifacts/NebulaTide-Windows/*
+            artifacts/NebulaTide-macOS/*
