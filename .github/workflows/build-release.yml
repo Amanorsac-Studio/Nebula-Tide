@@ -23,10 +23,15 @@ jobs:
       # SOUNDS_URL repository variable (set it in Settings → Variables → Actions
       # to wherever you host NebulaTide-Sounds-*.zip) and bundles it in.
       - name: Fetch sound library
-        if: ${{ vars.SOUNDS_URL != '' }}
         shell: pwsh
+        env:
+          SOUNDS_URL: ${{ endsWith(vars.SOUNDS_URL, '.zip') && vars.SOUNDS_URL || 'https://github.com/amanorsac/Nebula-Tide/releases/download/v1.0.0/NebulaTide-Sounds-1.0.0.zip' }}
         run: |
-          Invoke-WebRequest -Uri "${{ vars.SOUNDS_URL }}" -OutFile sounds.zip
+          "Downloading $env:SOUNDS_URL"
+          curl.exe -L --fail --retry 3 -o sounds.zip "$env:SOUNDS_URL"
+          $mb = [math]::Round((Get-Item sounds.zip).Length / 1MB, 1)
+          "Downloaded $mb MB"
+          if ($mb -lt 1) { throw "sounds.zip is too small — SOUNDS_URL must be a direct link to the .zip file" }
           Expand-Archive sounds.zip -DestinationPath presets
           "Sound library: $((Get-ChildItem presets -Recurse -File).Count) files"
 
@@ -92,9 +97,13 @@ jobs:
           xcrun stapler staple "$APP"
 
       - name: Fetch sound library
-        if: ${{ vars.SOUNDS_URL != '' }}
+        env:
+          SOUNDS_URL: ${{ endsWith(vars.SOUNDS_URL, '.zip') && vars.SOUNDS_URL || 'https://github.com/amanorsac/Nebula-Tide/releases/download/v1.0.0/NebulaTide-Sounds-1.0.0.zip' }}
         run: |
-          curl -L -o sounds.zip "${{ vars.SOUNDS_URL }}"
+          echo "Downloading $SOUNDS_URL"
+          curl -L --fail --retry 3 -o sounds.zip "$SOUNDS_URL"
+          ls -la sounds.zip
+          unzip -tq sounds.zip
           mkdir -p presets && unzip -q sounds.zip -d presets
           echo "Sound library: $(find presets -type f | wc -l) files"
 
