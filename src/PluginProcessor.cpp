@@ -152,6 +152,18 @@ static juce::File findPresetsDir()
     return {};
 }
 
+juce::File NebulaTideProcessor::userLibraryDir()
+{
+    return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
+               .getChildFile ("Nebula Tide").getChildFile ("presets");
+}
+
+void NebulaTideProcessor::reloadLibrary()
+{
+    stopAll();
+    scanPresets();          // clears and rescans pads, fx, textures, manifest
+}
+
 //==============================================================================
 NebulaTideProcessor::NebulaTideProcessor()
     : AudioProcessor (BusesProperties().withOutput ("Output", juce::AudioChannelSet::stereo(), true)),

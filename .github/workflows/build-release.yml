@@ -165,11 +165,56 @@ jobs:
           path: build-ios/NebulaTide_artefacts/Release/Standalone
 
   # ──────────────────────────────────────────────────────────────────────────
+  # Android: Projucer-generated Gradle project in Builds/Android. Sounds are
+  # downloaded by the app on first launch (Play Store size limits), so the
+  # APK is small. Signed release APK when ANDROID_KEYSTORE_B64 /
+  # ANDROID_KEYSTORE_PASSWORD / ANDROID_KEY_ALIAS secrets exist, otherwise a
+  # debug-signed APK that can be sideloaded for testing.
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "17" }
+
+      - name: Fetch JUCE (same path the project expects)
+        run: git clone --depth 1 --branch 8.0.6 https://github.com/juce-framework/JUCE.git build/_deps/juce-src
+
+      - name: Build APK
+        env:
+          ANDROID_KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          cd Builds/Android
+          chmod +x gradlew
+          if [ -n "$ANDROID_KEYSTORE_B64" ]; then
+            echo "$ANDROID_KEYSTORE_B64" | base64 -d > release.keystore
+            ./gradlew --no-daemon assembleRelease_Release
+            BT=$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)
+            APK=$(find app/build/outputs/apk -iname "*release*.apk" | head -1)
+            "$ANDROID_HOME/build-tools/$BT/zipalign" -p 4 "$APK" aligned.apk
+            "$ANDROID_HOME/build-tools/$BT/apksigner" sign --ks release.keystore \
+              --ks-pass "pass:$ANDROID_KEYSTORE_PASSWORD" --ks-key-alias "$ANDROID_KEY_ALIAS" \
+              --out ../../NebulaTide-Android.apk aligned.apk
+          else
+            ./gradlew --no-daemon assembleDebug_Debug
+            cp "$(find app/build/outputs/apk -name '*.apk' | head -1)" ../../NebulaTide-Android-debug.apk
+          fi
+          ls -la ../../*.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NebulaTide-Android
+          path: "*.apk"
+
+  # ──────────────────────────────────────────────────────────────────────────
   # On a version tag, collect everything into a GitHub Release so the zips
   # have permanent download links for the website.
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [windows, macos]
+    needs: [windows, macos, android]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -183,3 +228,4 @@ jobs:
           files: |
             artifacts/NebulaTide-Windows/*
             artifacts/NebulaTide-macOS/*
+            artifacts/NebulaTide-Android/*

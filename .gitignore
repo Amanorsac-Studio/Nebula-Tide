@@ -6,3 +6,8 @@ installer/output/
 .vs/
 presets/
 tools/trailer/frames/
+Builds/Android/local.properties
+Builds/Android/.gradle/
+Builds/Android/build/
+Builds/Android/app/build/
+build-projucer/

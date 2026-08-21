@@ -105,6 +105,13 @@ public:
     void getStateInformation (juce::MemoryBlock&) override;
     void setStateInformation (const void*, int) override;
 
+    // ── sound library (download on first launch for mobile / app-only installs) ──
+    bool hasLibrary() const { return ! presets.isEmpty() || ! fxSounds.isEmpty() || ! texSounds.isEmpty(); }
+    void reloadLibrary();                       // rescan after a download (message thread)
+    static juce::File userLibraryDir();         // per-user writable presets folder
+    static constexpr const char* libraryUrl =
+        "https://github.com/amanorsac/Nebula-Tide/releases/download/v1.0.0/NebulaTide-Sounds-1.0.0.zip";
+
     // ── preset / key control (message thread) ──
     const juce::Array<PresetGroup>& getPresets() const { return presets; }
     int  getCurrentPadIndex() const { return currentPad.load(); }

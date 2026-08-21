@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<JUCERPROJECT id="NbTd01" name="Nebula Tide" projectType="audioplug" jucerFormatVersion="1"
+              version="1.0.1" bundleIdentifier="com.nebulatide.app" companyName="NebulaTide"
+              pluginFormats="buildStandalone" pluginCharacteristicsValue="pluginIsSynth,pluginWantsMidiIn"
+              pluginManufacturerCode="Nblt" pluginCode="Ntid" pluginName="Nebula Tide"
+              pluginDesc="Endless drone pads in every key" defines="NEBULA_HAS_EMBEDDED_PRESETS=0&#10;NEBULA_BETA_EXPIRY=&quot;&quot;&#10;NEBULA_VERSION=&quot;1.0.1&quot;&#10;NEBULA_MOBILE=1"
+              useAppConfig="0" addUsingNamespaceToJuceHeader="0" displaySplashScreen="0"
+              cppLanguageStandard="17">
+  <MAINGROUP id="MainGrp" name="Nebula Tide">
+    <GROUP id="SrcGrp" name="Source">
+      <FILE id="SrcPP" name="PluginProcessor.cpp" compile="1" resource="0"
+            file="src/PluginProcessor.cpp"/>
+      <FILE id="SrcPH" name="PluginProcessor.h" compile="0" resource="0"
+            file="src/PluginProcessor.h"/>
+      <FILE id="SrcEP" name="PluginEditor.cpp" compile="1" resource="0" file="src/PluginEditor.cpp"/>
+      <FILE id="SrcEH" name="PluginEditor.h" compile="0" resource="0" file="src/PluginEditor.h"/>
+    </GROUP>
+    <FILE id="LogoPNG" name="logo.png" compile="0" resource="0" file="assets/logo.png"/>
+  </MAINGROUP>
+  <MODULES>
+    <MODULE id="juce_audio_basics" showAllCode="1" useLocalCopy="0" useGlobalPath="0"/>
+    <MODULE id="juce_audio_devices" showAllCode="1" useLocalCopy="0" useGlobalPath="0"/>
+    <MODULE id="juce_audio_formats" showAllCode="1" useLocalCopy="0" useGlobalPath="0"/>
+    <MODULE id="juce_audio_plugin_client" showAllCode="1" useLocalCopy="0"
+            useGlobalPath="0"/>
+    <MODULE id="juce_audio_processors" showAllCode="1" useLocalCopy="0" useGlobalPath="0"/>
+    <MODULE id="juce_audio_utils" showAllCode="1" useLocalCopy="0" useGlobalPath="0"/>
+    <MODULE id="juce_core" showAllCode="1" useLocalCopy="0" useGlobalPath="0"/>
+    <MODULE id="juce_data_structures" showAllCode="1" useLocalCopy="0" useGlobalPath="0"/>
+    <MODULE id="juce_dsp" showAllCode="1" useLocalCopy="0" useGlobalPath="0"/>
+    <MODULE id="juce_events" showAllCode="1" useLocalCopy="0" useGlobalPath="0"/>
+    <MODULE id="juce_graphics" showAllCode="1" useLocalCopy="0" useGlobalPath="0"/>
+    <MODULE id="juce_gui_basics" showAllCode="1" useLocalCopy="0" useGlobalPath="0"/>
+    <MODULE id="juce_gui_extra" showAllCode="1" useLocalCopy="0" useGlobalPath="0"/>
+  </MODULES>
+  <JUCEOPTIONS JUCE_WEB_BROWSER="0" JUCE_USE_CURL="0" JUCE_VST3_CAN_REPLACE_VST2="0"
+               JUCE_USE_MP3AUDIOFORMAT="1" JUCE_USE_FLAC="1" JUCE_USE_OGGVORBIS="1"/>
+  <EXPORTFORMATS>
+    <ANDROIDSTUDIO targetFolder="Builds/Android" androidMinimumSDK="24" androidTargetSDK="34"
+                   androidInternetNeeded="1" androidMicNeeded="0" androidExternalReadPermission="0"
+                   androidExternalWritePermission="0" androidScreenOrientation="landscape"
+                   androidVersionCode="2" androidApplicationId="com.nebulatide.app"
+                   extraAssetsFolder="" androidTheme="@android:style/Theme.NoTitleBar.Fullscreen"
+                   bigIcon="LogoPNG" smallIcon="LogoPNG" androidBluetoothScanNeeded="0"
+                   androidBluetoothAdvertiseNeeded="0" androidBluetoothConnectNeeded="0">
+      <CONFIGURATIONS>
+        <CONFIGURATION name="Debug" isDebug="1" optimisation="1" targetName="NebulaTide"/>
+        <CONFIGURATION name="Release" isDebug="0" optimisation="3" targetName="NebulaTide"/>
+      </CONFIGURATIONS>
+      <MODULEPATHS>
+        <MODULEPATH id="juce_audio_basics" path="build/_deps/juce-src/modules"/>
+        <MODULEPATH id="juce_audio_devices" path="build/_deps/juce-src/modules"/>
+        <MODULEPATH id="juce_audio_formats" path="build/_deps/juce-src/modules"/>
+        <MODULEPATH id="juce_audio_plugin_client" path="build/_deps/juce-src/modules"/>
+        <MODULEPATH id="juce_audio_processors" path="build/_deps/juce-src/modules"/>
+        <MODULEPATH id="juce_audio_utils" path="build/_deps/juce-src/modules"/>
+        <MODULEPATH id="juce_core" path="build/_deps/juce-src/modules"/>
+        <MODULEPATH id="juce_data_structures" path="build/_deps/juce-src/modules"/>
+        <MODULEPATH id="juce_dsp" path="build/_deps/juce-src/modules"/>
+        <MODULEPATH id="juce_events" path="build/_deps/juce-src/modules"/>
+        <MODULEPATH id="juce_graphics" path="build/_deps/juce-src/modules"/>
+        <MODULEPATH id="juce_gui_basics" path="build/_deps/juce-src/modules"/>
+        <MODULEPATH id="juce_gui_extra" path="build/_deps/juce-src/modules"/>
+      </MODULEPATHS>
+    </ANDROIDSTUDIO>
+  </EXPORTFORMATS>
+</JUCERPROJECT>

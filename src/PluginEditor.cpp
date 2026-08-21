@@ -578,6 +578,24 @@ NebulaTideEditor::NebulaTideEditor (NebulaTideProcessor& p)
     attachLearn (prevBtn, 10);     // previous preset
 
     rebuildPads();
+
+    // no sounds on this machine yet → offer the one-time library download
+    if (! processor.hasLibrary())
+    {
+        auto* self = this;
+        downloader = std::make_unique<LibraryDownloader> (processor, [self]
+        {
+            self->rebuildPads();
+            self->resized();
+            juce::Component::SafePointer<NebulaTideEditor> safe (self);
+            juce::MessageManager::callAsync ([safe]
+            {
+                if (safe != nullptr) safe->downloader.reset();
+            });
+        });
+        addAndMakeVisible (*downloader);
+    }
+
     setWantsKeyboardFocus (true);   // piano-key control: A W S E D F T G Y H U J
     setResizable (true, true);
     setResizeLimits (900, 660, 1920, 1200);
@@ -807,6 +825,132 @@ void ZoneKeyboard::mouseUp (const juce::MouseEvent&)
 }
 
 //==============================================================================
+LibraryDownloader::LibraryDownloader (NebulaTideProcessor& p, std::function<void()> ready)
+    : processor (p), onReady (std::move (ready))
+{
+    downloadBtn.setColour (juce::TextButton::textColourOffId, colours::seaBright);
+    downloadBtn.onClick = [this] { start(); };
+    addAndMakeVisible (downloadBtn);
+    startTimerHz (10);
+}
+
+LibraryDownloader::~LibraryDownloader()
+{
+    task.reset();
+    pool.removeAllJobs (true, 4000);
+}
+
+void LibraryDownloader::start()
+{
+    if (state.load() != 0 && state.load() != 3) return;
+    auto dir = NebulaTideProcessor::userLibraryDir();
+    dir.getParentDirectory().createDirectory();
+    zipFile = dir.getParentDirectory().getChildFile ("sounds-download.zip");
+    zipFile.deleteFile();
+    state.store (1);
+    fraction.store (0.0);
+    task = juce::URL (NebulaTideProcessor::libraryUrl)
+               .downloadToFile (zipFile, juce::URL::DownloadTaskOptions().withListener (this));
+    if (task == nullptr) { errorText = "Could not start download."; state.store (3); }
+    downloadBtn.setVisible (false);
+}
+
+void LibraryDownloader::progress (juce::URL::DownloadTask*, juce::int64 downloaded, juce::int64 total)
+{
+    if (total > 0) fraction.store ((double) downloaded / (double) total);
+}
+
+void LibraryDownloader::finished (juce::URL::DownloadTask*, bool success)
+{
+    if (! success)
+    {
+        juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<LibraryDownloader> (this)]
+        {
+            if (safe == nullptr) return;
+            safe->errorText = "Download failed. Check your connection and try again.";
+            safe->state.store (3);
+            safe->downloadBtn.setButtonText ("RETRY");
+            safe->downloadBtn.setVisible (true);
+        });
+        return;
+    }
+    state.store (2);
+    pool.addJob ([this] { unpackAndFinish(); });
+}
+
+void LibraryDownloader::unpackAndFinish()
+{
+    auto dir = NebulaTideProcessor::userLibraryDir();
+    dir.createDirectory();
+    juce::ZipFile zip (zipFile);
+    const int n = zip.getNumEntries();
+    for (int i = 0; i < n; ++i)
+    {
+        // entries may use backslashes (zip made on Windows) or a leading "./"
+        auto name = zip.getEntry (i)->filename.replaceCharacter ('\\', '/');
+        if (name.startsWith ("./")) name = name.substring (2);
+        if (name.isEmpty() || name.endsWithChar ('/')) continue;
+        auto target = dir.getChildFile (name);
+        target.getParentDirectory().createDirectory();
+        if (auto in = std::unique_ptr<juce::InputStream> (zip.createStreamForEntry (i)))
+        {
+            juce::FileOutputStream out (target);
+            if (out.openedOk()) { out.writeFromInputStream (*in, -1); }
+        }
+        fraction.store ((double) (i + 1) / (double) juce::jmax (1, n));
+    }
+    zipFile.deleteFile();
+
+    juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<LibraryDownloader> (this)]
+    {
+        if (safe == nullptr) return;
+        safe->processor.reloadLibrary();
+        if (safe->onReady) safe->onReady();
+    });
+}
+
+void LibraryDownloader::paint (juce::Graphics& g)
+{
+    g.fillAll (colours::bgDeep.withAlpha (0.94f));
+    auto box = getLocalBounds().withSizeKeepingCentre (juce::jmin (560, getWidth() - 40), 260).toFloat();
+    g.setColour (juce::Colour (0xff031420));
+    g.fillRoundedRectangle (box, 18.0f);
+    g.setColour (colours::seaBright.withAlpha (0.3f));
+    g.drawRoundedRectangle (box, 18.0f, 1.2f);
+
+    g.setColour (colours::foam);
+    g.setFont (juce::Font (juce::FontOptions (15.0f)).withExtraKerningFactor (0.25f));
+    g.drawText ("S O U N D   L I B R A R Y", box.removeFromTop (56), juce::Justification::centred);
+
+    g.setFont (juce::Font (juce::FontOptions (12.0f)));
+    g.setColour (colours::textDim);
+    juce::String msg;
+    switch (state.load())
+    {
+        case 0:  msg = "Nebula Tide needs its sound library (about 1 GB, one time).\nWi-Fi recommended."; break;
+        case 1:  msg = "Downloading...  " + juce::String ((int) (fraction.load() * 100)) + "%"; break;
+        case 2:  msg = "Unpacking...  " + juce::String ((int) (fraction.load() * 100)) + "%"; break;
+        default: msg = errorText; break;
+    }
+    g.drawFittedText (msg, box.reduced (30, 0).removeFromTop (70).toNearestInt(), juce::Justification::centred, 3);
+
+    if (state.load() == 1 || state.load() == 2)
+    {
+        auto bar = box.reduced (40, 0).withHeight (8.0f).withY (box.getY() + 150);
+        g.setColour (colours::seaBright.withAlpha (0.15f));
+        g.fillRoundedRectangle (bar, 4.0f);
+        g.setColour (colours::seaBright);
+        g.fillRoundedRectangle (bar.withWidth (bar.getWidth() * (float) fraction.load()), 4.0f);
+    }
+}
+
+void LibraryDownloader::resized()
+{
+    auto box = getLocalBounds().withSizeKeepingCentre (juce::jmin (560, getWidth() - 40), 260);
+    downloadBtn.setBounds (box.removeFromBottom (70).withSizeKeepingCentre (260, 34));
+}
+
+//==============================================================================
 void SettingsPanel::paint (juce::Graphics& g)
 {
     auto b = getLocalBounds().toFloat();
@@ -981,6 +1125,11 @@ void NebulaTideEditor::resized()
     settingsPanel.setBounds (getLocalBounds().withSizeKeepingCentre (
         juce::jmin (620, getWidth() - 80), juce::jmin (620, getHeight() - 100)));
     settingsPanel.toFront (false);
+    if (downloader != nullptr)
+    {
+        downloader->setBounds (getLocalBounds());
+        downloader->toFront (false);
+    }
     auto nav = header.withSizeKeepingCentre (juce::jmin (440, header.getWidth()), 36);
     prevBtn.setBounds (nav.removeFromLeft (40));
     nextBtn.setBounds (nav.removeFromRight (40));
