@@ -103,9 +103,15 @@ jobs:
           echo "Downloading $SOUNDS_URL"
           curl -L --fail --retry 3 -o sounds.zip "$SOUNDS_URL"
           ls -la sounds.zip
-          unzip -tq sounds.zip
-          mkdir -p presets && unzip -q sounds.zip -d presets
-          echo "Sound library: $(find presets -type f | wc -l) files"
+          # unzip exits 1 on mere warnings (e.g. Windows-made zips using
+          # backslash paths) — extract anyway, then verify we got files
+          mkdir -p presets && (unzip -q sounds.zip -d presets || true)
+          # repair entries whose names still contain backslashes → real subfolders
+          find presets -depth -name '*\\*' | while IFS= read -r f; do
+            n="${f//\\//}"; mkdir -p "$(dirname "$n")"; mv "$f" "$n"; done
+          COUNT=$(find presets -type f | wc -l | tr -d ' ')
+          echo "Sound library: $COUNT files"
+          [ "$COUNT" -gt 0 ] || { echo "::error::no files extracted"; exit 1; }
 
       # One-click macOS installer (.pkg): app → /Applications, VST3 + AU →
       # /Library/Audio/Plug-Ins, sounds → /Library/Application Support.
