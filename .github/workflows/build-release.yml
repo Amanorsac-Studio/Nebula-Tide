@@ -19,6 +19,17 @@ jobs:
       - name: Build (Standalone + VST3)
         run: cmake --build build --config Release --target NebulaTide_Standalone NebulaTide_VST3
 
+      # The sound library is too large for git. CI fetches it from the
+      # SOUNDS_URL repository variable (set it in Settings → Variables → Actions
+      # to wherever you host NebulaTide-Sounds-*.zip) and bundles it in.
+      - name: Fetch sound library
+        if: ${{ vars.SOUNDS_URL != '' }}
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "${{ vars.SOUNDS_URL }}" -OutFile sounds.zip
+          Expand-Archive sounds.zip -DestinationPath presets
+          "Sound library: $((Get-ChildItem presets -Recurse -File).Count) files"
+
       - name: Install Inno Setup
         run: choco install innosetup --no-progress -y
 
@@ -79,6 +90,31 @@ jobs:
           xcrun notarytool submit NebulaTide-mac.zip \
             --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" --wait
           xcrun stapler staple "$APP"
+
+      - name: Fetch sound library
+        if: ${{ vars.SOUNDS_URL != '' }}
+        run: |
+          curl -L -o sounds.zip "${{ vars.SOUNDS_URL }}"
+          mkdir -p presets && unzip -q sounds.zip -d presets
+          echo "Sound library: $(find presets -type f | wc -l) files"
+
+      # One-click macOS installer (.pkg): app → /Applications, VST3 + AU →
+      # /Library/Audio/Plug-Ins, sounds → /Library/Application Support.
+      - name: Build .pkg installer
+        run: |
+          V="${GITHUB_REF_NAME#v}"; case "$V" in 1*) ;; *) V="1.0.0";; esac
+          R=build-mac/NebulaTide_artefacts/Release
+          mkdir -p pkgroot/Applications \
+                   "pkgroot/Library/Audio/Plug-Ins/VST3" \
+                   "pkgroot/Library/Audio/Plug-Ins/Components" \
+                   "pkgroot/Library/Application Support/Nebula Tide"
+          cp -R "$R/Standalone/Nebula Tide.app" pkgroot/Applications/
+          cp -R "$R/VST3/Nebula Tide.vst3" "pkgroot/Library/Audio/Plug-Ins/VST3/"
+          cp -R "$R/AU/Nebula Tide.component" "pkgroot/Library/Audio/Plug-Ins/Components/"
+          [ -d presets ] && cp -R presets "pkgroot/Library/Application Support/Nebula Tide/presets"
+          mkdir -p dist
+          pkgbuild --root pkgroot --identifier com.nebulatide.app --version "$V" \
+                   --install-location / "dist/NebulaTide-$V-macOS.pkg"
 
       - name: Package zips
         run: |

@@ -19,12 +19,18 @@ Installed locations:
 If you downloaded the SOUND LIBRARY separately (NebulaTide-Sounds-1.0.0.zip),
 unzip it so the files land in  C:\ProgramData\Nebula Tide\presets
 
-macOS
------
-Unzip and drag "Nebula Tide.app" to Applications. Plugins:
-   VST3 -> /Library/Audio/Plug-Ins/VST3/
-   AU   -> /Library/Audio/Plug-Ins/Components/   (Logic, GarageBand)
-Sound library -> /Library/Application Support/Nebula Tide/presets
+macOS INSTALL
+-------------
+Run  NebulaTide-1.0.0-macOS.pkg  — one installer for everything:
+   App ........ /Applications/Nebula Tide.app
+   VST3 ....... /Library/Audio/Plug-Ins/VST3/Nebula Tide.vst3
+   AU ......... /Library/Audio/Plug-Ins/Components/Nebula Tide.component
+   Sounds ..... /Library/Application Support/Nebula Tide/presets
+(If macOS says the installer is from an unidentified developer: right-click
+the .pkg -> Open -> Open.)
+
+iPad: available through the App Store / TestFlight only (Apple does not allow
+installing iPad apps from a download).
 
 QUICK START
 -----------
