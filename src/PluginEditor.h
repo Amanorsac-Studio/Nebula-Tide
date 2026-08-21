@@ -155,7 +155,7 @@ public:
     void mouseUp (const juce::MouseEvent&) override;
 
 private:
-    void timerCallback();
+    void timerCallback() override;
     float dragStartVolume = 0.5f;
     bool  dragging = false;
     void cycle (int dir)

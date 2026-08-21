@@ -191,9 +191,16 @@ jobs:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
         run: |
+          # Projucer's Gradle config signs with Android Studio's default debug
+          # keystore, which doesn't exist on a fresh CI machine — create it.
+          mkdir -p ~/.android
+          [ -f ~/.android/debug.keystore ] || keytool -genkeypair -v \
+            -keystore ~/.android/debug.keystore -storepass android -keypass android \
+            -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \
+            -dname "CN=Android Debug,O=Android,C=US"
           cd Builds/Android
           chmod +x gradlew
-          # on failure, publish an error digest to the job summary (publicly readable)
+          # on failure, publish an error digest as annotations (publicly readable)
           gradle_run() {
             set +e; ./gradlew --no-daemon --stacktrace "$@" 2>&1 | tee gradle.log; local code=${PIPESTATUS[0]}; set -e
             if [ "$code" != "0" ]; then
