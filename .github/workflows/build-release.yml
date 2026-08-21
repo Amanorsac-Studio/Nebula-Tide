@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
   push:
     tags: ["v*"]
+    branches: ["ci-*"]     # test builds without creating a release
 
 jobs:
   # ──────────────────────────────────────────────────────────────────────────
@@ -189,9 +190,19 @@ jobs:
         run: |
           cd Builds/Android
           chmod +x gradlew
+          # on failure, publish an error digest to the job summary (publicly readable)
+          gradle_run() {
+            set +e; ./gradlew --no-daemon --stacktrace "$@" 2>&1 | tee gradle.log; local code=${PIPESTATUS[0]}; set -e
+            if [ "$code" != "0" ]; then
+              { echo "### Android build failed"; echo '```';
+                grep -n -iE "error:|error C|FAILED|What went wrong|undefined reference|No such file|not found|Exception" -A4 gradle.log | tail -180;
+                echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+              exit "$code"
+            fi
+          }
           if [ -n "$ANDROID_KEYSTORE_B64" ]; then
             echo "$ANDROID_KEYSTORE_B64" | base64 -d > release.keystore
-            ./gradlew --no-daemon assembleRelease_Release
+            gradle_run assembleRelease_Release
             BT=$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)
             APK=$(find app/build/outputs/apk -iname "*release*.apk" | head -1)
             "$ANDROID_HOME/build-tools/$BT/zipalign" -p 4 "$APK" aligned.apk
@@ -199,7 +210,7 @@ jobs:
               --ks-pass "pass:$ANDROID_KEYSTORE_PASSWORD" --ks-key-alias "$ANDROID_KEY_ALIAS" \
               --out ../../NebulaTide-Android.apk aligned.apk
           else
-            ./gradlew --no-daemon assembleDebug_Debug
+            gradle_run assembleDebug_Debug
             cp "$(find app/build/outputs/apk -name '*.apk' | head -1)" ../../NebulaTide-Android-debug.apk
           fi
           ls -la ../../*.apk
