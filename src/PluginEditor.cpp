@@ -1,0 +1,1050 @@
+#include "PluginEditor.h"
+#include <juce_audio_plugin_client/Standalone/juce_StandaloneFilterWindow.h>
+
+namespace colours
+{
+    const juce::Colour bgDeep     { 0xff020c16 };
+    const juce::Colour foam       { 0xffbdf3ff };
+    const juce::Colour textDim    { 0xff6fa8bd };
+
+    // theme accents — retinted live to the current preset's colour
+    juce::Colour bgMid      { 0xff04283f };
+    juce::Colour sea        { 0xff16b8d8 };
+    juce::Colour seaBright  { 0xff4fe3ff };
+
+    inline void setTheme (juce::Colour c)
+    {
+        seaBright = c.withMultipliedSaturation (1.05f).brighter (0.05f);
+        sea       = c.withMultipliedBrightness (0.75f);
+        bgMid     = c.withMultipliedSaturation (0.85f).withBrightness (0.16f);
+    }
+}
+
+//==============================================================================
+void NebulaBackground::paint (juce::Graphics& g)
+{
+    auto b = getLocalBounds().toFloat();
+    const float energy = juce::jlimit (0.0f, 1.0f, smoothedLevel * 1.8f);
+    const float cx = b.getCentreX();
+    const float cy = b.getHeight() * 0.42f;
+
+    juce::ColourGradient grad (colours::bgMid.brighter (energy * 0.15f), cx, cy * 0.5f,
+                               colours::bgDeep, cx, b.getBottom(), true);
+    g.setGradientFill (grad);
+    g.fillAll();
+
+    // stars streaking past — z-projected, with motion streaks toward the viewer
+    const float focal = juce::jmin (b.getWidth(), b.getHeight()) * 0.9f;
+    for (auto& s : stars)
+    {
+        const float px = cx + (s.x / s.z) * focal * 0.5f;
+        const float py = cy + (s.y / s.z) * focal * 0.5f;
+        if (px < -20 || px > b.getWidth() + 20 || py < -20 || py > b.getHeight() + 20)
+            continue;
+
+        const float closeness = juce::jlimit (0.0f, 1.0f, 1.0f - s.z);
+        const float sz = s.size * (0.5f + closeness * 2.2f);
+
+        // streak: from a slightly deeper z toward current position
+        const float zBehind = s.z + 0.045f + energy * 0.05f;
+        const float bx = cx + (s.x / zBehind) * focal * 0.5f;
+        const float by = cy + (s.y / zBehind) * focal * 0.5f;
+
+        g.setColour (colours::foam.withAlpha (0.10f + closeness * 0.30f));
+        g.drawLine (bx, by, px, py, sz * 0.6f);
+        g.setColour (colours::foam.withAlpha (0.25f + closeness * 0.55f));
+        g.fillEllipse (px - sz * 0.5f, py - sz * 0.5f, sz, sz);
+    }
+
+    // slow rotating aurora arcs around the centre
+    for (int arc = 0; arc < 3; ++arc)
+    {
+        const float radius = 130.0f + arc * 60.0f + std::sin (phase * 0.4f + arc) * 14.0f;
+        const float rot = phase * (0.08f + arc * 0.03f) * (arc % 2 == 0 ? 1.0f : -1.0f);
+        juce::Path p;
+        p.addCentredArc (cx, cy, radius, radius * 0.6f, rot, 0.4f, 4.6f, true);
+        g.setColour (colours::sea.withAlpha (0.08f + energy * 0.20f - arc * 0.02f));
+        g.strokePath (p, juce::PathStrokeType (2.0f + energy * 3.0f));
+    }
+
+    // breathing glow at the centre of the fall
+    const float glowR = 170.0f + energy * 110.0f + std::sin (phase * 0.9f) * 16.0f;
+    juce::ColourGradient glow (colours::sea.withAlpha (0.12f + energy * 0.22f), cx, cy,
+                               juce::Colours::transparentBlack, cx + glowR, cy, true);
+    g.setGradientFill (glow);
+    g.fillEllipse (cx - glowR, cy - glowR, glowR * 2.0f, glowR * 2.0f);
+}
+
+//==============================================================================
+NebulaLookAndFeel::NebulaLookAndFeel()
+{
+    setColour (juce::Slider::textBoxTextColourId, colours::foam);
+    setColour (juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
+    setColour (juce::Label::textColourId, colours::textDim);
+    setColour (juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
+    setColour (juce::TextButton::textColourOffId, colours::textDim);
+    setColour (juce::TextButton::textColourOnId, colours::seaBright);
+}
+
+void NebulaLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int w, int h,
+                                          float pos, float startAngle, float endAngle, juce::Slider& s)
+{
+    auto bounds = juce::Rectangle<int> (x, y, w, h).toFloat().reduced (8.0f);
+    const float radius = juce::jmin (bounds.getWidth(), bounds.getHeight()) / 2.0f;
+    const auto centre = bounds.getCentre();
+    const float angle = startAngle + pos * (endAngle - startAngle);
+
+    // outer halo — the drama
+    juce::ColourGradient halo (colours::sea.withAlpha (0.30f), centre.x, centre.y,
+                               juce::Colours::transparentBlack, centre.x + radius * 1.9f, centre.y, true);
+    g.setGradientFill (halo);
+    g.fillEllipse (centre.x - radius * 1.9f, centre.y - radius * 1.9f, radius * 3.8f, radius * 3.8f);
+
+    // background track arc
+    juce::Path track;
+    track.addCentredArc (centre.x, centre.y, radius + 6.0f, radius + 6.0f, 0.0f, startAngle, endAngle, true);
+    g.setColour (colours::seaBright.withAlpha (0.12f));
+    g.strokePath (track, juce::PathStrokeType (3.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+
+    // body
+    g.setGradientFill (juce::ColourGradient (juce::Colour (0xff0d3a55), centre.x - radius * 0.4f, centre.y - radius * 0.5f,
+                                             juce::Colour (0xff071c2c), centre.x, centre.y + radius, true));
+    g.fillEllipse (centre.x - radius, centre.y - radius, radius * 2, radius * 2);
+    g.setColour (colours::sea.withAlpha (0.5f));
+    g.drawEllipse (centre.x - radius, centre.y - radius, radius * 2, radius * 2, 1.4f);
+
+    // value arc — thick, glowing
+    juce::Path arc;
+    arc.addCentredArc (centre.x, centre.y, radius + 6.0f, radius + 6.0f, 0.0f, startAngle, angle, true);
+    g.setColour (colours::sea.withAlpha (0.5f));
+    g.strokePath (arc, juce::PathStrokeType (7.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    g.setColour (colours::seaBright);
+    g.strokePath (arc, juce::PathStrokeType (3.2f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+
+    // pointer
+    juce::Path pointer;
+    pointer.addRoundedRectangle (-1.8f, -radius + 4.0f, 3.6f, radius * 0.45f, 1.8f);
+    g.setColour (colours::seaBright);
+    g.fillPath (pointer, juce::AffineTransform::rotation (angle).translated (centre));
+
+    // live value readout in the knob centre
+    juce::String text;
+    const double v = s.getValue();
+    if (s.getName() == "pan")
+        text = std::abs (v) < 0.02 ? "C" : (v < 0 ? "L" + juce::String ((int) std::round (-v * 100))
+                                                  : "R" + juce::String ((int) std::round (v * 100)));
+    else
+        text = juce::String ((int) std::round (v * 100));
+    g.setColour (colours::foam);
+    g.setFont (juce::Font (juce::FontOptions (radius * 0.42f)));
+    g.drawText (text, bounds, juce::Justification::centred);
+}
+
+void NebulaLookAndFeel::drawLinearSlider (juce::Graphics& g, int x, int y, int w, int h,
+                                          float pos, float, float, juce::Slider::SliderStyle, juce::Slider&)
+{
+    const float trackY = (float) y + h * 0.5f - 3.0f;
+    auto track = juce::Rectangle<float> ((float) x, trackY, (float) w, 6.0f);
+    g.setColour (colours::seaBright.withAlpha (0.12f));
+    g.fillRoundedRectangle (track, 3.0f);
+
+    auto fill = track.withWidth (juce::jmax (0.0f, pos - (float) x));
+    g.setColour (colours::sea);
+    g.fillRoundedRectangle (fill, 3.0f);
+
+    g.setColour (colours::foam);
+    g.fillEllipse (pos - 7.0f, trackY - 4.0f, 14.0f, 14.0f);
+    g.setColour (colours::seaBright.withAlpha (0.5f));
+    g.drawEllipse (pos - 7.0f, trackY - 4.0f, 14.0f, 14.0f, 1.0f);
+}
+
+//==============================================================================
+void PadButton::paintButton (juce::Graphics& g, bool highlighted, bool down)
+{
+    auto b = getLocalBounds().toFloat().reduced (3.0f);
+    const float corner = 14.0f;
+
+    juce::Colour top = isActivePad ? tint.withBrightness (0.55f).withAlpha (0.85f)
+                                   : tint.withBrightness (0.24f).withSaturation (0.6f).withAlpha (0.85f);
+    juce::Colour bottom = isActivePad ? tint.withBrightness (0.32f).withAlpha (0.9f)
+                                      : juce::Colour (0xff03121e).withAlpha (0.9f);
+    if (down) { top = top.brighter (0.2f); bottom = bottom.brighter (0.2f); }
+
+    g.setGradientFill (juce::ColourGradient (top, b.getX(), b.getY(), bottom, b.getX(), b.getBottom(), false));
+    g.fillRoundedRectangle (b, corner);
+
+    if (isActivePad)
+    {
+        const float breathe = 0.5f + 0.5f * std::sin (glowPhase);
+        g.setColour (tint.withAlpha (0.35f + breathe * 0.35f));
+        g.drawRoundedRectangle (b, corner, 2.2f);
+        g.setColour (tint.withAlpha (0.10f + breathe * 0.10f));
+        g.drawRoundedRectangle (b.expanded (3.0f), corner + 3.0f, 3.0f);
+    }
+    else
+    {
+        g.setColour (tint.withAlpha (highlighted ? 0.6f : 0.22f));
+        g.drawRoundedRectangle (b, corner, 1.2f);
+    }
+
+    g.setColour (colours::foam);
+    g.setFont (juce::Font (juce::FontOptions (13.0f)).withExtraKerningFactor (0.08f));
+    g.drawFittedText (getButtonText(), getLocalBounds().reduced (8), juce::Justification::centred, 3);
+}
+
+//==============================================================================
+juce::Point<float> KeyPlanets::planetCentre (int i) const
+{
+    auto b = getLocalBounds().toFloat();
+    // planets spread along a shallow elliptical orbit, each wobbling on its own
+    const float t = (float) i / 12.0f;
+    const float baseX = b.getX() + b.getWidth() * (0.06f + 0.88f * t);
+    const float arcY  = b.getCentreY() + std::sin (t * juce::MathConstants<float>::pi) * -b.getHeight() * 0.18f;
+    const float wobX = std::sin (phase * 0.5f + wobblePhase[i]) * 6.0f;
+    const float wobY = std::cos (phase * 0.7f + wobblePhase[i] * 1.3f) * 8.0f;
+    return { baseX + wobX, arcY + wobY };
+}
+
+void KeyPlanets::paint (juce::Graphics& g)
+{
+    const int pad = processor.getCurrentPadIndex();
+    const int currentKey = processor.getCurrentKey();
+    const auto& presets = processor.getPresets();
+    const bool havePad = pad >= 0 && pad < presets.size();
+
+    // faint orbit line
+    {
+        juce::Path orbit;
+        bool first = true;
+        for (int i = 0; i < 48; ++i)
+        {
+            const float t = (float) i / 47.0f;
+            auto b = getLocalBounds().toFloat();
+            const float x = b.getX() + b.getWidth() * (0.06f + 0.88f * t);
+            const float y = b.getCentreY() + std::sin (t * juce::MathConstants<float>::pi) * -b.getHeight() * 0.18f;
+            if (first) { orbit.startNewSubPath (x, y); first = false; }
+            else       orbit.lineTo (x, y);
+        }
+        g.setColour (colours::sea.withAlpha (0.10f));
+        g.strokePath (orbit, juce::PathStrokeType (1.0f));
+    }
+
+    for (int i = 0; i < 12; ++i)
+    {
+        const auto c = planetCentre (i);
+        const bool available = ! havePad || presets[pad].hasKey (i);
+        const bool selected = havePad && i == currentKey;
+        const bool hover = i == hovered;
+
+        const float pulse = 0.5f + 0.5f * std::sin (phase * 1.2f + wobblePhase[i]);
+        float r = selected ? 16.0f + pulse * 2.5f : (hover ? 14.0f : 11.0f);
+        if (! available) r = 9.0f;
+
+        // each planet gets a subtle personal tint around the sea palette
+        auto planetColour = selected
+            ? colours::seaBright
+            : colours::sea.withRotatedHue ((hue[i] - 0.5f) * 0.16f).withAlpha (available ? 0.9f : 0.25f);
+
+        if (selected || hover)
+        {
+            juce::ColourGradient glow (planetColour.withAlpha (selected ? 0.45f : 0.25f), c.x, c.y,
+                                       juce::Colours::transparentBlack, c.x + r * 2.6f, c.y, true);
+            g.setGradientFill (glow);
+            g.fillEllipse (c.x - r * 2.6f, c.y - r * 2.6f, r * 5.2f, r * 5.2f);
+        }
+
+        g.setGradientFill (juce::ColourGradient (planetColour.brighter (0.4f), c.x - r * 0.35f, c.y - r * 0.4f,
+                                                 planetColour.darker (0.8f), c.x + r * 0.6f, c.y + r * 0.7f, true));
+        g.fillEllipse (c.x - r, c.y - r, r * 2.0f, r * 2.0f);
+
+        // a thin ring on every 4th planet, saturn-style
+        if (i % 4 == 1 && available)
+        {
+            g.setColour (planetColour.withAlpha (0.5f));
+            juce::Path ring;
+            ring.addEllipse (c.x - r * 1.55f, c.y - r * 0.45f, r * 3.1f, r * 0.9f);
+            g.strokePath (ring, juce::PathStrokeType (1.2f),
+                          juce::AffineTransform::rotation (-0.45f, c.x, c.y));
+        }
+
+        g.setColour (available ? colours::foam : colours::textDim.withAlpha (0.5f));
+        g.setFont (juce::Font (juce::FontOptions (selected ? 13.0f : 11.0f)));
+        g.drawText (keynames::display[i],
+                    juce::Rectangle<float> (c.x - 20, c.y + r + 2, 40, 14),
+                    juce::Justification::centred);
+    }
+}
+
+void KeyPlanets::mouseDown (const juce::MouseEvent& e)
+{
+    for (int i = 0; i < 12; ++i)
+        if (planetCentre (i).getDistanceFrom (e.position) < 20.0f)
+        {
+            if (e.mods.isPopupMenu())      // right-click a planet → learn that key
+            {
+                const int action = 14 + i;
+                juce::PopupMenu m;
+                m.addItem ("MIDI Learn: " + juce::String (NebulaTideProcessor::midiActionName (action)),
+                           [this, action] { processor.startLearn (action); });
+                const auto bound = processor.bindingText (action);
+                if (bound != "-")
+                    m.addItem ("Clear binding (" + bound + ")",
+                               [this, action] { processor.clearBinding (action); });
+                m.showMenuAsync ({});
+            }
+            else
+            {
+                processor.selectKey (i);
+            }
+            return;
+        }
+}
+
+void KeyPlanets::mouseMove (const juce::MouseEvent& e)
+{
+    hovered = -1;
+    for (int i = 0; i < 12; ++i)
+        if (planetCentre (i).getDistanceFrom (e.position) < 20.0f)
+            { hovered = i; break; }
+}
+
+//==============================================================================
+void StarPlayer::timerCallback()
+{
+    phase += 0.05f;
+    repaint();
+}
+
+void StarPlayer::resized()
+{
+    auto b = getLocalBounds();
+    auto bottom = b.removeFromBottom (24);
+    prev.setBounds (bottom.removeFromLeft (26));
+    next.setBounds (bottom.removeFromRight (26));
+    loopBtn.setBounds (bottom.reduced (6, 0));
+    b.removeFromBottom (18);   // name row (painted)
+    starArea = b.toFloat();
+}
+
+// The star doubles as its own volume knob: drag vertically to set level
+// (shown as the arc around the star); a plain click plays / stops.
+void StarPlayer::mouseDown (const juce::MouseEvent& e)
+{
+    dragging = false;
+    if (starArea.contains (e.position))
+        dragStartVolume = processor.getAuxVolume (cat);
+}
+
+void StarPlayer::mouseDrag (const juce::MouseEvent& e)
+{
+    if (! starArea.contains (e.getMouseDownPosition().toFloat()))
+        return;
+    if (e.getDistanceFromDragStart() > 4)
+        dragging = true;
+    if (dragging)
+        processor.setAuxVolume (cat, dragStartVolume - (float) e.getDistanceFromDragStartY() / 150.0f);
+}
+
+void StarPlayer::mouseUp (const juce::MouseEvent& e)
+{
+    if (e.mods.isPopupMenu())          // right-click = MIDI learn menu, not play
+        { dragging = false; return; }
+    if (dragging || ! starArea.contains (e.position))
+        { dragging = false; return; }
+    if (processor.isAuxPlaying (cat))
+        processor.stopAux (cat);
+    else
+        processor.triggerAux (cat, processor.getAuxIndex (cat));
+}
+
+void StarPlayer::paint (juce::Graphics& g)
+{
+    const auto& sounds = processor.getAuxSounds (cat);
+    const bool playing = processor.isAuxPlaying (cat);
+    const bool looping = processor.getAuxLoop (cat);
+    const bool empty = sounds.isEmpty();
+
+    const auto c = starArea.getCentre();
+    const float pulse = 0.5f + 0.5f * std::sin (phase);
+    const float base = juce::jmin (starArea.getWidth(), starArea.getHeight()) * 0.16f;
+    const float r = base * (playing ? 1.1f + pulse * 0.18f : 1.0f + pulse * 0.06f);
+
+    // everything (halo, rays) must fade out INSIDE the component bounds,
+    // otherwise the glow gets clipped and shows as a hard square edge
+    const float maxReach = juce::jmin (starArea.getWidth(), starArea.getHeight()) * 0.5f - 2.0f;
+
+    auto col = empty ? colour.withSaturation (0.1f).withAlpha (0.35f) : colour;
+
+    // glow halo
+    const float haloR = juce::jmin (r * 3.2f, maxReach);
+    juce::ColourGradient halo (col.withAlpha (playing ? 0.55f : 0.28f), c.x, c.y,
+                               juce::Colours::transparentBlack, c.x + haloR, c.y, true);
+    g.setGradientFill (halo);
+    g.fillEllipse (c.x - haloR, c.y - haloR, haloR * 2.0f, haloR * 2.0f);
+
+    // 4-point star rays
+    juce::Path rays;
+    for (int i = 0; i < 4; ++i)
+    {
+        const float a = phase * 0.15f + i * juce::MathConstants<float>::halfPi;
+        const float len = juce::jmin (r * (2.1f + (playing ? pulse * 0.7f : 0.0f)), maxReach);
+        juce::Path ray;
+        ray.addTriangle (0.0f, -len, -r * 0.16f, 0.0f, r * 0.16f, 0.0f);
+        rays.addPath (ray, juce::AffineTransform::rotation (a).translated (c));
+    }
+    g.setColour (col.withAlpha (0.55f));
+    g.fillPath (rays);
+
+    // core
+    g.setGradientFill (juce::ColourGradient (juce::Colours::white.withAlpha (0.95f), c.x, c.y,
+                                             col, c.x + r, c.y, true));
+    g.fillEllipse (c.x - r, c.y - r, r * 2.0f, r * 2.0f);
+
+    // sound name
+    const juce::String label = empty ? "empty"
+                                     : sounds[juce::jlimit (0, sounds.size() - 1, processor.getAuxIndex (cat))].name;
+    g.setColour (colours::foam.withAlpha (empty ? 0.4f : 1.0f));
+    g.setFont (juce::Font (juce::FontOptions (11.0f)).withExtraKerningFactor (0.15f));
+    g.drawText (label.toUpperCase(),
+                juce::Rectangle<float> (0.0f, starArea.getBottom(), (float) getWidth(), 16.0f),
+                juce::Justification::centred);
+
+    // volume arc: wraps the star from 7 o'clock around to 5 o'clock. Drag the
+    // star vertically to change it.
+    {
+        const float vol = processor.getAuxVolume (cat);
+        const float arcR = juce::jmin (r * 1.75f, maxReach - 1.0f);
+        const float a0 = juce::MathConstants<float>::pi * 0.75f;
+        const float a1 = juce::MathConstants<float>::pi * 2.25f;
+        juce::Path track, fill;
+        track.addCentredArc (c.x, c.y, arcR, arcR, 0.0f, a0, a1, true);
+        g.setColour (col.withAlpha (0.18f));
+        g.strokePath (track, juce::PathStrokeType (2.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        if (vol > 0.005f)
+        {
+            fill.addCentredArc (c.x, c.y, arcR, arcR, 0.0f, a0, a0 + (a1 - a0) * vol, true);
+            g.setColour (col.withAlpha (0.85f));
+            g.strokePath (fill, juce::PathStrokeType (2.4f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        }
+    }
+
+    // loop state ring around the core
+    if (looping)
+    {
+        g.setColour (col.withAlpha (0.9f));
+        g.drawEllipse (c.x - r * 1.45f, c.y - r * 1.45f, r * 2.9f, r * 2.9f, 1.6f);
+    }
+
+    loopBtn.setColour (juce::TextButton::textColourOffId,
+                       looping ? colours::seaBright : colours::textDim);
+}
+
+//==============================================================================
+NebulaTideEditor::NebulaTideEditor (NebulaTideProcessor& p)
+    : AudioProcessorEditor (p), processor (p)
+{
+    setLookAndFeel (&lnf);
+    addAndMakeVisible (background);
+    addAndMakeVisible (keyPlanets);
+    addChildComponent (zoneKeyboard);            // hidden by default; KEYS button toggles
+    zoneKeyboard.setVisible (processor.showKeyboard.load());
+    keysBtn.setColour (juce::TextButton::textColourOffId, colours::textDim);
+    keysBtn.onClick = [this]
+    {
+        const bool show = ! zoneKeyboard.isVisible();
+        zoneKeyboard.setVisible (show);
+        processor.showKeyboard.store (show);
+        resized();
+    };
+    addAndMakeVisible (keysBtn);
+    addAndMakeVisible (fxStar);
+    addAndMakeVisible (texStar);
+
+    auto styleLabel = [this] (juce::Label& l, const juce::String& text, float size, juce::Colour c)
+    {
+        l.setText (text, juce::dontSendNotification);
+        l.setFont (juce::Font (juce::FontOptions (size)).withExtraKerningFactor (0.25f));
+        l.setColour (juce::Label::textColourId, c);
+        l.setJustificationType (juce::Justification::centred);
+        addAndMakeVisible (l);
+    };
+
+    styleLabel (title, "N E B U L A   T I D E", 19.0f, colours::foam);
+    styleLabel (presetLabel, "- select a pad -", 14.0f, colours::foam);
+    styleLabel (statusLabel, "drifting", 11.0f, colours::textDim);
+    styleLabel (reverbTitle, "S P A C E", 10.0f, colours::textDim);
+
+    for (auto* btn : { &prevBtn, &nextBtn })
+    {
+        btn->setColour (juce::TextButton::textColourOffId, colours::sea);
+        addAndMakeVisible (*btn);
+    }
+    prevBtn.onClick = [this] { browse (-1); };
+    nextBtn.onClick = [this] { browse (1); };
+
+    auto smallLabel = [this] (juce::Label& l, const juce::String& name)
+    {
+        l.setText (name, juce::dontSendNotification);
+        l.setFont (juce::Font (juce::FontOptions (10.0f)).withExtraKerningFactor (0.3f));
+        l.setColour (juce::Label::textColourId, colours::textDim);
+        l.setJustificationType (juce::Justification::centred);
+        addAndMakeVisible (l);
+    };
+
+    auto setupKnob = [&] (juce::Slider& s, juce::Label& l, const juce::String& name, const juce::String& id)
+    {
+        s.setName (id);
+        s.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
+        s.setTextBoxStyle (juce::Slider::NoTextBox, true, 0, 0);
+        addAndMakeVisible (s);
+        smallLabel (l, name);
+    };
+    auto setupSlider = [&] (juce::Slider& s, juce::Label& l, const juce::String& name)
+    {
+        s.setSliderStyle (juce::Slider::LinearHorizontal);
+        s.setTextBoxStyle (juce::Slider::NoTextBox, true, 0, 0);
+        addAndMakeVisible (s);
+        smallLabel (l, name);
+    };
+
+    setupKnob (volumeKnob, volumeLabel, "VOLUME", "volume");
+    setupKnob (panKnob, panLabel, "PAN", "pan");
+    setupSlider (fadeSlider, fadeLabel, "CROSSFADE");
+    setupSlider (rMixSlider, rMixLabel, "MIX");
+    setupSlider (rSizeSlider, rSizeLabel, "SIZE");
+    setupSlider (rDampSlider, rDampLabel, "DAMP");
+
+    for (auto* btn : { &roomBtn, &plateBtn, &hallBtn })
+    {
+        btn->setClickingTogglesState (false);
+        addAndMakeVisible (*btn);
+    }
+    roomBtn.onClick  = [this] { processor.applyReverbPreset (ReverbType::room); };
+    plateBtn.onClick = [this] { processor.applyReverbPreset (ReverbType::plate); };
+    hallBtn.onClick  = [this] { processor.applyReverbPreset (ReverbType::hall); };
+
+    volumeAtt = std::make_unique<Attachment> (processor.apvts, "volume", volumeKnob);
+    panAtt    = std::make_unique<Attachment> (processor.apvts, "pan", panKnob);
+    fadeAtt   = std::make_unique<Attachment> (processor.apvts, "fade", fadeSlider);
+    rMixAtt   = std::make_unique<Attachment> (processor.apvts, "rmix", rMixSlider);
+    rSizeAtt  = std::make_unique<Attachment> (processor.apvts, "rsize", rSizeSlider);
+    rDampAtt  = std::make_unique<Attachment> (processor.apvts, "rdamp", rDampSlider);
+
+    settingsBtn.setColour (juce::TextButton::textColourOffId, colours::textDim);
+    settingsBtn.onClick = [this] { settingsPanel.setVisible (! settingsPanel.isVisible()); };
+    addAndMakeVisible (settingsBtn);
+    addChildComponent (settingsPanel);   // hidden until toggled
+
+    // one settings entry point: fold the standalone's stock "Options" button
+    // into our panel — device selection lives under AUDIO / MIDI DEVICES...
+    if (juce::JUCEApplicationBase::isStandaloneApp())
+    {
+        settingsPanel.devicesBtn.onClick = []
+        {
+            if (auto* holder = juce::StandalonePluginHolder::getInstance())
+                holder->showAudioSettingsDialog();
+        };
+        juce::MessageManager::callAsync ([safeThis = juce::Component::SafePointer<NebulaTideEditor> (this)]
+        {
+            if (safeThis == nullptr) return;
+            if (auto* top = safeThis->getTopLevelComponent())
+                for (int i = 0; i < top->getNumChildComponents(); ++i)
+                    if (auto* btn = dynamic_cast<juce::Button*> (top->getChildComponent (i)))
+                        if (btn->getButtonText() == "Options")
+                            btn->setVisible (false);
+        });
+    }
+    else
+    {
+        settingsPanel.devicesBtn.setVisible (false);   // hosts own the devices
+    }
+
+    // right-click MIDI learn on the controls themselves
+    auto attachLearn = [this] (juce::Component& c, int action)
+    {
+        auto* l = learnListeners.add (new MidiLearnListener (processor,
+            [action] { return juce::Array<int> { action }; }));
+        c.addMouseListener (l, true);
+    };
+    attachLearn (volumeKnob, 0);
+    attachLearn (panKnob, 1);
+    attachLearn (rMixSlider, 2);
+    attachLearn (rSizeSlider, 3);
+    attachLearn (rDampSlider, 4);
+    attachLearn (fadeSlider, 5);
+    attachLearn (fxStar, 6);
+    attachLearn (texStar, 7);
+    attachLearn (nextBtn, 9);      // next preset
+    attachLearn (prevBtn, 10);     // previous preset
+
+    rebuildPads();
+    setWantsKeyboardFocus (true);   // piano-key control: A W S E D F T G Y H U J
+    setResizable (true, true);
+    setResizeLimits (900, 660, 1920, 1200);
+    setSize (1100, 780);
+    startTimerHz (30);
+}
+
+NebulaTideEditor::~NebulaTideEditor()
+{
+    setLookAndFeel (nullptr);
+}
+
+void NebulaTideEditor::browse (int dir)
+{
+    const int n = processor.getPresets().size();
+    if (n == 0) return;
+    viewIndex = (viewIndex + dir + n) % n;
+    if (processor.getCurrentPadIndex() >= 0)
+        processor.selectPad (viewIndex);    // playing → crossfade into the next preset
+    resized();
+    repaint();
+}
+
+void NebulaTideEditor::rebuildPads()
+{
+    pads.clear();
+    auto& presets = processor.getPresets();
+    for (int i = 0; i < presets.size(); ++i)
+    {
+        auto* pad = pads.add (new PadButton());
+        pad->setButtonText (presets[i].name.toUpperCase());
+        pad->tint = presets[i].colour;
+        pad->onClick = [this, i]
+        {
+            if (processor.getCurrentPadIndex() == i)
+                processor.stopAll();
+            else
+                processor.selectPad (i);
+        };
+        // right-click: learn pad play/stop + direct-select for this preset slot
+        auto* l = learnListeners.add (new MidiLearnListener (processor, [i]
+        {
+            juce::Array<int> actions { 13 };
+            if (i < 8) actions.add (26 + i);
+            return actions;
+        }));
+        pad->addMouseListener (l, true);
+        addChildComponent (pad);    // visibility managed per-frame: one at a time
+    }
+}
+
+void NebulaTideEditor::updateReverbButtons()
+{
+    const int type = (int) processor.apvts.getRawParameterValue ("rtype")->load();
+    auto colour = [&] (juce::TextButton& b, bool on)
+    {
+        b.setColour (juce::TextButton::textColourOffId, on ? colours::seaBright : colours::textDim);
+    };
+    colour (roomBtn, type == 0);
+    colour (plateBtn, type == 1);
+    colour (hallBtn, type == 2);
+}
+
+void NebulaTideEditor::updatePadStates()
+{
+    const int current = processor.getCurrentPadIndex();
+    auto& presets = processor.getPresets();
+
+    // playing pad drives the view; the whole UI retints to the viewed preset
+    if (current >= 0)
+        viewIndex = current;
+    if (! presets.isEmpty())
+    {
+        viewIndex = juce::jlimit (0, presets.size() - 1, viewIndex);
+        colours::setTheme (presets.getReference (viewIndex).colour);
+    }
+
+    for (int i = 0; i < pads.size(); ++i)
+    {
+        pads[i]->setVisible (i == viewIndex);
+        const bool active = (i == current);
+        if (pads[i]->isActivePad != active)
+            pads[i]->isActivePad = active;
+        if (active)
+            pads[i]->glowPhase += 0.09f;
+        pads[i]->repaint();
+    }
+
+    juce::String name = "- no pads -";
+    if (! presets.isEmpty())
+    {
+        name = presets.getReference (viewIndex).name.toUpperCase();
+        if (current == viewIndex && current >= 0)
+            name += juce::String::fromUTF8 ("   \xc2\xb7   ") + keynames::display[processor.getCurrentKey()];
+    }
+    presetLabel.setText (name, juce::dontSendNotification);
+    statusLabel.setText (current >= 0 ? "transmitting" : "drifting", juce::dontSendNotification);
+    statusLabel.setColour (juce::Label::textColourId,
+                           current >= 0 ? colours::seaBright : colours::textDim);
+}
+
+//==============================================================================
+int ZoneKeyboard::whiteIndex (int n)
+{
+    int count = 0;
+    for (int i = firstNote; i < n; ++i)
+        if (! isBlack (i)) ++count;
+    return count;
+}
+
+juce::Rectangle<float> ZoneKeyboard::whiteKeyRect (int note) const
+{
+    const int totalWhite = whiteIndex (lastNote + 1);
+    const float kw = (float) getWidth() / (float) totalWhite;
+    const float top = 18.0f;
+    return { whiteIndex (note) * kw, top, kw, (float) getHeight() - top };
+}
+
+juce::Rectangle<float> ZoneKeyboard::blackKeyRect (int note) const
+{
+    const auto prevWhite = whiteKeyRect (note - 1);
+    const float bw = prevWhite.getWidth() * 0.62f;
+    return { prevWhite.getRight() - bw * 0.5f, prevWhite.getY(), bw, prevWhite.getHeight() * 0.6f };
+}
+
+int ZoneKeyboard::noteAt (juce::Point<float> p) const
+{
+    for (int n = firstNote; n <= lastNote; ++n)          // black keys sit on top
+        if (isBlack (n) && blackKeyRect (n).contains (p)) return n;
+    for (int n = firstNote; n <= lastNote; ++n)
+        if (! isBlack (n) && whiteKeyRect (n).contains (p)) return n;
+    return -1;
+}
+
+void ZoneKeyboard::paint (juce::Graphics& g)
+{
+    const juce::Colour fxCol (0xffffc96b), texCol (0xffff5a6e);
+    auto zoneColour = [&] (int note) -> juce::Colour
+    {
+        switch (NebulaTideProcessor::zoneOf (note))
+        {
+            case 0: return fxCol;
+            case 1: return colours::seaBright;
+            case 2: return texCol;
+            default: return juce::Colours::transparentBlack;
+        }
+    };
+
+    // zone label band
+    struct Z { int lo, hi; const char* name; juce::Colour c; };
+    const Z zones[3] = {
+        { NebulaTideProcessor::fxZoneLo,  NebulaTideProcessor::fxZoneHi,  "FX",       fxCol },
+        { NebulaTideProcessor::keyZoneLo, NebulaTideProcessor::keyZoneHi, "KEYS",     colours::seaBright },
+        { NebulaTideProcessor::texZoneLo, NebulaTideProcessor::texZoneHi, "TEXTURES", texCol } };
+    for (auto& z : zones)
+    {
+        const float x0 = whiteKeyRect (z.lo).getX();
+        const float x1 = whiteKeyRect (isBlack (z.hi) ? z.hi - 1 : z.hi).getRight();
+        g.setColour (z.c.withAlpha (0.22f));
+        g.fillRoundedRectangle (x0, 1.0f, x1 - x0, 14.0f, 4.0f);
+        g.setColour (z.c);
+        g.setFont (juce::Font (juce::FontOptions (9.5f)).withExtraKerningFactor (0.25f));
+        g.drawText (z.name, juce::Rectangle<float> (x0, 0.0f, x1 - x0, 16.0f), juce::Justification::centred);
+    }
+
+    // white keys
+    for (int n = firstNote; n <= lastNote; ++n)
+    {
+        if (isBlack (n)) continue;
+        auto r = whiteKeyRect (n).reduced (0.6f, 0.0f);
+        const auto zc = zoneColour (n);
+        const bool held = processor.heldKeys[n].load() || n == mouseNote;
+        juce::Colour fill = zc.isTransparent() ? juce::Colour (0xffdbe4ea)
+                                               : zc.interpolatedWith (juce::Colours::white, 0.55f);
+        if (held) fill = zc.isTransparent() ? colours::seaBright : zc;
+        g.setColour (fill);
+        g.fillRoundedRectangle (r, 2.0f);
+        g.setColour (juce::Colour (0xff08141c).withAlpha (0.8f));
+        g.drawRoundedRectangle (r, 2.0f, 0.8f);
+        if (n % 12 == 0)   // octave label on each C
+        {
+            g.setColour (juce::Colour (0xff08141c).withAlpha (0.7f));
+            g.setFont (juce::Font (juce::FontOptions (8.5f)));
+            g.drawText ("C" + juce::String (n / 12 - 1), r.removeFromBottom (12.0f), juce::Justification::centred);
+        }
+    }
+    // black keys
+    for (int n = firstNote; n <= lastNote; ++n)
+    {
+        if (! isBlack (n)) continue;
+        auto r = blackKeyRect (n);
+        const auto zc = zoneColour (n);
+        const bool held = processor.heldKeys[n].load() || n == mouseNote;
+        juce::Colour fill = zc.isTransparent() ? juce::Colour (0xff141c24)
+                                               : zc.interpolatedWith (juce::Colour (0xff141c24), 0.55f);
+        if (held) fill = zc.isTransparent() ? colours::seaBright : zc.brighter (0.2f);
+        g.setColour (fill);
+        g.fillRoundedRectangle (r, 2.0f);
+        g.setColour (juce::Colour (0xff02080e));
+        g.drawRoundedRectangle (r, 2.0f, 0.8f);
+    }
+}
+
+void ZoneKeyboard::mouseDown (const juce::MouseEvent& e)
+{
+    mouseNote = noteAt (e.position);
+    if (mouseNote < 0) return;
+    const int n = mouseNote;
+    switch (NebulaTideProcessor::zoneOf (n))
+    {
+        case 1: processor.keyCommand (n % 12); break;
+        case 0: { const int i = n - NebulaTideProcessor::fxZoneLo;
+                  if (i < processor.getAuxSounds (0).size())
+                  { if (processor.isAuxPlaying (0) && processor.getAuxIndex (0) == i) processor.stopAux (0);
+                    else processor.triggerAux (0, i); } break; }
+        case 2: { const int i = n - NebulaTideProcessor::texZoneLo;
+                  if (i < processor.getAuxSounds (1).size())
+                  { if (processor.isAuxPlaying (1) && processor.getAuxIndex (1) == i) processor.stopAux (1);
+                    else processor.triggerAux (1, i); } break; }
+        default: break;
+    }
+}
+
+void ZoneKeyboard::mouseUp (const juce::MouseEvent&)
+{
+    mouseNote = -1;
+}
+
+//==============================================================================
+void SettingsPanel::paint (juce::Graphics& g)
+{
+    auto b = getLocalBounds().toFloat();
+    g.setColour (juce::Colour (0xff031420).withAlpha (0.96f));
+    g.fillRoundedRectangle (b, 18.0f);
+    g.setColour (colours::seaBright.withAlpha (0.25f));
+    g.drawRoundedRectangle (b.reduced (0.5f), 18.0f, 1.2f);
+
+    g.setColour (colours::foam);
+    g.setFont (juce::Font (juce::FontOptions (15.0f)).withExtraKerningFactor (0.25f));
+    g.drawText ("S E T T I N G S", getLocalBounds().removeFromTop (44), juce::Justification::centred);
+
+    auto info = getLocalBounds().reduced (26, 0).removeFromTop (118).withTrimmedTop (46);
+    g.setFont (juce::Font (juce::FontOptions (11.5f)));
+    g.setColour (colours::textDim);
+    g.drawFittedText (
+        "MIDI ZONES  -  FX C2-B2 (one note per sound)  |  KEYS C3-B4 (pitch = key)  |  TEXTURES C5-B5 (one note per sound)\n"
+        "KEYBOARD  -  A W S E D F T G Y H U J = C..B   |   SPACE play/stop   |   \x3c \x3e presets   |   1 FX   |   2 texture\n"
+        "MIDI LEARN  -  click LEARN, then move a knob or press a pad on your controller.",
+        info, juce::Justification::topLeft, 4);
+}
+
+void SettingsPanel::resized()
+{
+    auto area = getLocalBounds().reduced (26, 12);
+    area.removeFromTop (124);
+    if (devicesBtn.isVisible())
+        devicesBtn.setBounds (area.removeFromBottom (36).withSizeKeepingCentre (240, 30));
+    gateBtn.setBounds (area.removeFromTop (26));
+    area.removeFromTop (4);
+
+    viewport.setBounds (area);
+    const int rowH = 28;
+    rowsHolder.setSize (area.getWidth() - 12, rows.size() * rowH);
+    auto inner = rowsHolder.getLocalBounds();
+    for (auto* row : rows)
+    {
+        auto r = inner.removeFromTop (rowH);
+        row->clear.setBounds (r.removeFromRight (30).reduced (2));
+        row->learn.setBounds (r.removeFromRight (74).reduced (2));
+        row->bind.setBounds (r.removeFromRight (110));
+        row->name.setBounds (r);
+    }
+}
+
+void SettingsPanel::timerCallback()
+{
+    const int learning = processor.learningAction();
+    for (int i = 0; i < rows.size(); ++i)
+    {
+        auto* row = rows[i];
+        row->bind.setText (processor.bindingText (i), juce::dontSendNotification);
+        row->bind.setColour (juce::Label::textColourId,
+                             processor.bindingText (i) == "-" ? colours::textDim : colours::seaBright);
+        const bool isLearning = (learning == i);
+        row->learn.setButtonText (isLearning ? "WAITING..." : "LEARN");
+        row->learn.setColour (juce::TextButton::textColourOffId,
+                              isLearning ? colours::seaBright : colours::textDim);
+    }
+}
+
+//==============================================================================
+// Beta builds stop working after their expiry date (compile-time constant).
+static bool betaExpired()
+{
+    const juce::String expiry (NEBULA_BETA_EXPIRY);
+    if (expiry.length() != 10) return false;
+    const juce::Time exp (expiry.substring (0, 4).getIntValue(),
+                          expiry.substring (5, 7).getIntValue() - 1,
+                          expiry.substring (8, 10).getIntValue(), 0, 0);
+    return juce::Time::getCurrentTime() > exp;
+}
+
+bool NebulaTideEditor::keyPressed (const juce::KeyPress& k)
+{
+    if (betaExpired()) return false;
+    // piano row → the 12 keys
+    static const juce::String pianoRow ("awsedftgyhuj");
+    const auto ch = (juce::juce_wchar) juce::CharacterFunctions::toLowerCase ((juce::juce_wchar) k.getTextCharacter());
+    const int pc = pianoRow.indexOfChar (ch);
+    if (pc >= 0)
+    {
+        processor.keyCommand (pc);
+        return true;
+    }
+
+    if (k == juce::KeyPress::spaceKey)
+    {
+        if (processor.getCurrentPadIndex() >= 0) processor.stopAll();
+        else                                     processor.selectPad (viewIndex);
+        return true;
+    }
+    if (k == juce::KeyPress::leftKey)  { browse (-1); return true; }
+    if (k == juce::KeyPress::rightKey) { browse (1);  return true; }
+    if (ch == '1') { processor.toggleAux (0); return true; }
+    if (ch == '2') { processor.toggleAux (1); return true; }
+
+    return false;
+}
+
+void NebulaTideEditor::timerCallback()
+{
+    if (betaExpired())
+    {
+        // curtain down: silence and disable everything, repaint the notice
+        static bool silenced = false;
+        if (! silenced) { processor.stopAll(); silenced = true; }
+        for (auto* c : getChildren())
+            c->setEnabled (false);
+        repaint();
+        return;
+    }
+    updatePadStates();
+    updateReverbButtons();
+    keysBtn.setColour (juce::TextButton::textColourOffId,
+                       zoneKeyboard.isVisible() ? colours::seaBright : colours::textDim);
+}
+
+void NebulaTideEditor::paint (juce::Graphics& g)
+{
+    g.fillAll (colours::bgDeep);
+
+    auto footer = getLocalBounds().removeFromBottom (170).reduced (26, 10).toFloat();
+    g.setColour (juce::Colour (0xff041826).withAlpha (0.72f));
+    g.fillRoundedRectangle (footer, 20.0f);
+    g.setColour (colours::seaBright.withAlpha (0.14f));
+    g.drawRoundedRectangle (footer, 20.0f, 1.0f);
+
+    if (pads.isEmpty())
+    {
+        g.setColour (colours::textDim);
+        g.setFont (juce::Font (juce::FontOptions (14.0f)));
+        g.drawFittedText ("No pads found.\nAdd audio files to the 'presets' folder and rebuild,\nor place a 'presets' folder next to the app.",
+                          getLocalBounds().reduced (60), juce::Justification::centred, 4);
+    }
+
+    // beta badge / expiry curtain
+    const juce::String expiry (NEBULA_BETA_EXPIRY);
+    if (expiry.isNotEmpty())
+    {
+        if (betaExpired())
+        {
+            g.fillAll (colours::bgDeep.withAlpha (0.94f));
+            g.setColour (colours::foam);
+            g.setFont (juce::Font (juce::FontOptions (16.0f)).withExtraKerningFactor (0.2f));
+            g.drawFittedText ("THIS BETA BUILD HAS EXPIRED\n\nThank you for testing Nebula Tide.\nPlease ask for the latest build.",
+                              getLocalBounds().reduced (60), juce::Justification::centred, 5);
+        }
+        else
+        {
+            g.setColour (colours::textDim.withAlpha (0.7f));
+            g.setFont (juce::Font (juce::FontOptions (9.5f)).withExtraKerningFactor (0.2f));
+            g.drawText ("BETA " + juce::String (NEBULA_VERSION) + "  -  expires " + expiry,
+                        getLocalBounds().removeFromBottom (14).reduced (10, 0), juce::Justification::centredRight);
+        }
+    }
+}
+
+void NebulaTideEditor::resized()
+{
+    background.setBounds (getLocalBounds());
+    auto area = getLocalBounds();
+
+    // header
+    auto header = area.removeFromTop (64).reduced (26, 10);
+    title.setBounds (header.removeFromLeft (280));
+    settingsBtn.setBounds (header.removeFromRight (86));
+    header.removeFromRight (6);
+    keysBtn.setBounds (header.removeFromRight (62));
+    statusLabel.setBounds (header.removeFromRight (130));
+
+    settingsPanel.setBounds (getLocalBounds().withSizeKeepingCentre (
+        juce::jmin (620, getWidth() - 80), juce::jmin (620, getHeight() - 100)));
+    settingsPanel.toFront (false);
+    auto nav = header.withSizeKeepingCentre (juce::jmin (440, header.getWidth()), 36);
+    prevBtn.setBounds (nav.removeFromLeft (40));
+    nextBtn.setBounds (nav.removeFromRight (40));
+    presetLabel.setBounds (nav);
+
+    // footer
+    auto footer = area.removeFromBottom (170).reduced (40, 20);
+
+    auto volArea = footer.removeFromLeft (150);
+    volumeLabel.setBounds (volArea.removeFromBottom (16));
+    volumeKnob.setBounds (volArea.withSizeKeepingCentre (116, 116));
+
+    auto panArea = footer.removeFromRight (150);
+    panLabel.setBounds (panArea.removeFromBottom (16));
+    panKnob.setBounds (panArea.withSizeKeepingCentre (116, 116));
+
+    // middle: reverb block (left) + crossfade (right)
+    auto middle = footer.reduced (24, 0);
+    auto reverbArea = middle.removeFromLeft (middle.getWidth() * 55 / 100);
+    reverbTitle.setBounds (reverbArea.removeFromTop (14));
+
+    auto typeRow = reverbArea.removeFromTop (26);
+    const int bw = typeRow.getWidth() / 3;
+    roomBtn.setBounds (typeRow.removeFromLeft (bw).reduced (4, 0));
+    plateBtn.setBounds (typeRow.removeFromLeft (bw).reduced (4, 0));
+    hallBtn.setBounds (typeRow.reduced (4, 0));
+
+    auto sliderRow = [&] (juce::Slider& s, juce::Label& l)
+    {
+        auto r = reverbArea.removeFromTop (juce::jmax (20, reverbArea.getHeight() / 3));
+        l.setBounds (r.removeFromLeft (44));
+        s.setBounds (r);
+    };
+    sliderRow (rMixSlider, rMixLabel);
+    sliderRow (rSizeSlider, rSizeLabel);
+    sliderRow (rDampSlider, rDampLabel);
+
+    middle.removeFromLeft (30);
+    auto fadeArea = middle.withSizeKeepingCentre (middle.getWidth(), 56);
+    fadeLabel.setBounds (fadeArea.removeFromBottom (16));
+    fadeSlider.setBounds (fadeArea);
+
+    // Kontakt-style zoned keyboard strip (when shown), then the key planets ribbon
+    if (zoneKeyboard.isVisible())
+        zoneKeyboard.setBounds (area.removeFromBottom (74).reduced (30, 0).withTrimmedBottom (6));
+    keyPlanets.setBounds (area.removeFromBottom (zoneKeyboard.isVisible() ? 100 : 110).reduced (30, 0));
+
+    // FX star (left) and texture star (right) flank the pad grid, sitting
+    // slightly above centre
+    const int starW = juce::jmin (120, area.getWidth() / 7);
+    const int starH = 150;
+    const int starY = area.getY() + area.getHeight() / 4 - starH / 2;
+    fxStar.setBounds (area.getX() + 22, starY, starW, starH);
+    texStar.setBounds (area.getRight() - starW - 22, starY, starW, starH);
+
+    // single-preset view: one large pad, centre stage. All pads share the same
+    // bounds; visibility (one at a time) is handled in updatePadStates().
+    if (! pads.isEmpty())
+    {
+        const int padSize = juce::jmin (190, area.getHeight() - 20);
+        const auto centre = juce::Rectangle<int> (area.getCentreX() - padSize / 2,
+                                                  area.getY() + (area.getHeight() - padSize) / 2,
+                                                  padSize, padSize);
+        for (auto* pad : pads)
+            pad->setBounds (centre);
+    }
+}

@@ -1,0 +1,124 @@
+{
+  "product_name": "Nebula Tide",
+  "tagline": "An ocean of sound. In every key.",
+  "brand": {
+    "personality": ["cosmic", "serene", "precise", "alive"],
+    "voice": "Calm confidence. Short sentences. Ocean and space imagery. Never hypey.",
+    "mode": "dark-only",
+    "logo": {
+      "raster": "screenshots/00-logo.png",
+      "concept": "Four-point star with three tide arcs radiating like sound waves, deep navy rounded square",
+      "svg_needed": true
+    }
+  },
+  "colors": {
+    "bg_deep": "#020C16",
+    "bg_mid": "#04283F",
+    "accent": "#16B8D8",
+    "accent_bright": "#4FE3FF",
+    "foam_text": "#BDF3FF",
+    "text_dim": "#6FA8BD",
+    "panel_glass": "rgba(4,24,38,0.72)",
+    "fx_gold": "#FFC96B",
+    "texture_ice": "#BFEAFF",
+    "danger": "#FF9B9B",
+    "note": "Accent retints per preset in-app; site theme-morph section should demonstrate this."
+  },
+  "fonts": {
+    "primary": "Cascadia Code, Consolas, 'JetBrains Mono', monospace",
+    "h1": { "transform": "uppercase", "letterSpacing": "0.4em", "weight": 500 },
+    "labels": { "size": "10-11px", "letterSpacing": "0.25em", "transform": "uppercase", "color": "text_dim" },
+    "body": { "size": "14-16px" }
+  },
+  "features": [
+    { "id": "seamless-loop", "name": "Seamless infinite looping", "priority": "P0", "headline": "Loops that never end. Or click.", "copy": "Sample-accurate seamless looping. Leave it running for the whole service, the whole session, the whole night.", "animation": "circular waveform closing into infinity symbol" },
+    { "id": "twelve-keys", "name": "12 real keys per preset", "priority": "P0", "headline": "Twelve keys. Zero pitch-shifting.", "copy": "Every preset is recorded twelve times — one real performance per key. Your E♭ was never a stretched C.", "animation": "planet ring sequential light-up" },
+    { "id": "key-planets", "name": "Key planets UI", "priority": "P0", "headline": "Touch a planet. Change the sky.", "copy": "Keys orbit as living planets. Tap one and the pad crossfades into a new tonal world.", "animation": "planet hover halo, click ripple" },
+    { "id": "living-ui", "name": "Preset-colored living UI", "priority": "P0", "headline": "It wears your sound's color.", "copy": "Choose a preset and the entire interface — planets, knobs, sky — re-tints to match.", "animation": "full-viewport hue morph on scroll/tap" },
+    { "id": "stars", "name": "FX & Texture stars", "priority": "P0", "headline": "Two stars. Endless weather.", "copy": "Rain, wind, birds, crowds, prayers — layered atmospheres that survive preset changes and fade out with the music.", "animation": "gold star pulse; rain streaks behind ice star" },
+    { "id": "reverb", "name": "Room / Plate / Hall reverb", "priority": "P1", "headline": "Three rooms in one knob row.", "copy": "Room, Plate, and Hall — tuned to the classics — with Mix, Size, and Damp when you want to go deeper.", "animation": "morphing wireframe room" },
+    { "id": "crossfade", "name": "Crossfaded transitions", "priority": "P1", "headline": "Every transition is musical.", "copy": "Pads, keys, and presets crossfade smoothly — 0.5 to 12 seconds, your call.", "animation": "two waveforms dissolving" },
+    { "id": "formats", "name": "Standalone + VST3", "priority": "P1", "headline": "Stage app. Studio plugin. Same soul.", "copy": "Run it standalone before the set or load the VST3 in your DAW.", "animation": "window docking into DAW mockup" },
+    { "id": "packs", "name": "Folder-based preset packs", "priority": "P1", "headline": "New sounds, no reinstall.", "copy": "Preset packs drop in as folders. The app just sees them.", "animation": "folder opening, pads flying to stage" }
+  ],
+  "screenshots": [
+    { "file": "screenshots/00-logo.png", "role": "logo", "status": "ready" },
+    { "file": "screenshots/01-main-idle.png", "role": "hero", "status": "ready", "caption": "Everything you need. Nothing you don't." },
+    { "file": "screenshots/02-main-playing.png", "role": "alive-proof", "status": "ready", "caption": "The interface breathes with your sound." },
+    { "file": "screenshots/03-forge.png", "role": "creator-story", "status": "todo", "capture": "localhost:8451 with a preset open" },
+    { "file": "screenshots/06-theme-pair.png", "role": "theme-morph", "status": "todo", "capture": "same frame, two preset colors" }
+  ],
+  "animations": {
+    "easing": "cubic-bezier(0.22,1,0.36,1)",
+    "reveal": { "duration_ms": 600, "y_offset_px": 24, "stagger_ms": 80 },
+    "hero_starfield": { "tech": "canvas/WebGL", "stars": 170, "behavior": "z-fall toward viewer with streaks", "reduced_motion": "freeze frame" },
+    "parallax_layers": { "starfield": 0.2, "aurora_arcs": 0.5, "content": 1.0 },
+    "libraries": { "scroll": "GSAP ScrollTrigger", "components": "Framer Motion", "marks": "Lottie", "hero3d": "Three.js only if needed" },
+    "video_loops": ["planet tap crossfade 6s", "theme color morph 6s", "star trigger 6s"]
+  },
+  "copy": {
+    "hero_headline": "An ocean of sound. In every key.",
+    "hero_subheadline": "Nebula Tide plays endless, seamless drone pads — real recordings in all 12 keys — inside an interface that's alive. One click, infinite atmosphere.",
+    "cta_primary": "Download for Windows",
+    "cta_secondary": "Hear it in 30 seconds",
+    "cta_mid": "Bring the ocean to your next set — Download free",
+    "cta_final": "The tide is waiting.",
+    "workflow": ["Pick your preset", "Tap your key", "Play forever"],
+    "workflow_caption": "That's the whole manual.",
+    "benefits": ["Never fear silence on stage", "Setlist-ready in seconds", "Studio-honest sound in every key", "An instrument you'll want to open"],
+    "footer": "Nebula Tide — endless ambient instrument. Built by musicians, for the moments between the notes."
+  },
+  "SEO": {
+    "title": "Nebula Tide — Endless Drone Pads in All 12 Keys | Windows App & VST3",
+    "description": "Play seamless, infinite ambient drone pads — real recordings in every key, never pitch-shifted. FX, textures, and three reverbs in a living interface. Free download for Windows.",
+    "og_title": "Nebula Tide — An ocean of sound. In every key.",
+    "og_description": "Endless drone pads, living interface, twelve real keys. Hear it in 30 seconds.",
+    "keywords": ["drone pads", "worship pads", "ambient pads app", "pad VST3", "seamless pad loops", "pads in every key", "ambient instrument"]
+  },
+  "FAQs": [
+    { "q": "Does it work in my DAW?", "a": "Yes — VST3 on Windows now; macOS AU/VST3 planned." },
+    { "q": "Are the pads pitch-shifted?", "a": "Never. Twelve real recordings per preset." },
+    { "q": "Can I add my own sounds?", "a": "Preset packs install by dropping a folder — no reinstall." },
+    { "q": "Will it click when looping?", "a": "No — looping is sample-accurate and crossfades protect every transition." },
+    { "q": "Mac / iPad?", "a": "Same codebase, planned next." },
+    { "q": "How big is it?", "a": "App ~10 MB; sound library depends on packs (FLAC, roughly half of WAV size)." }
+  ],
+  "testimonials_placeholders": [
+    { "quote": "It's the first pad tool my whole team actually enjoys using.", "attribution": "Worship director", "PLACEHOLDER": true },
+    { "quote": "The 12-key thing isn't marketing. You can hear it.", "attribution": "Ambient producer", "PLACEHOLDER": true }
+  ],
+  "pricing": {
+    "status": "structure-ready-numbers-TBD",
+    "tiers": [
+      { "name": "Player", "price": "Free", "includes": "App + Deep Current preset" },
+      { "name": "Preset Packs", "price": "TBD one-time", "includes": "Own forever, drop-in install" },
+      { "name": "Everything Bundle", "price": "TBD", "includes": "All current packs + launch-window packs" }
+    ]
+  },
+  "ui_sections_order": [
+    "hero", "audio-demo-bar", "workflow-3-steps", "feature-12-keys", "theme-morph-moment",
+    "feature-stars-and-reverb", "comparison-table", "testimonials", "packs-pricing", "faq", "final-cta", "footer"
+  ],
+  "navigation": ["Features", "Packs", "FAQ", "Contact"],
+  "footer": {
+    "tagline": "Built by musicians, for the moments between the notes.",
+    "columns": ["Product (Download, Packs, Changelog)", "Help (FAQ, Contact)", "Legal (Privacy, Terms)"]
+  },
+  "accessibility": {
+    "contrast": "foam #BDF3FF on #020C16 passes 4.5:1",
+    "reduced_motion": "freeze starfield and planet wobble, keep content reveals",
+    "audio": "never autoplay; keyboard-operable player; captions on all video"
+  },
+  "image_prompts": [
+    { "id": "hero-bg", "prompt": "Vast deep-space starfield falling toward the viewer with subtle motion streaks, deep navy #020c16 to teal #04283f radial gradient, faint glowing aurora arcs of cyan light curving through the darkness, sparse foam-white stars, cinematic, ultra-clean, no planets, no nebula clouds, minimal, 8k, dark ambient mood" },
+    { "id": "twelve-keys", "prompt": "Twelve small glowing planets arranged along a gentle elliptical orbit line in deep space, each planet a slightly different shade of teal and blue, one planet glowing brightly cyan with a soft halo, thin Saturn ring on one planet, minimal dark navy background, soft glow, product-grade 3D render, clean composition" },
+    { "id": "endless-loop", "prompt": "A perfect circular waveform of cyan light closing seamlessly into itself in dark space, a subtle infinity symbol formed at the joining point, glowing line art, deep navy background, elegant, minimal, high contrast" },
+    { "id": "weather-stars", "prompt": "Two four-pointed stars facing each other in dark space, left star warm gold emitting tiny clap-like light sparks, right star ice blue with faint rain streaks and drifting mist behind it, deep navy background, minimal, cinematic glow" },
+    { "id": "laptop-mockup", "prompt": "Dark space-gray laptop on a black desk in a dim studio, screen glowing with a dark blue audio application interface with glowing cyan circular knobs, screen is the only light source, cyan light spilling onto the desk surface, shallow depth of field, photorealistic, moody" },
+    { "id": "divider", "prompt": "Three thin concentric arcs of cyan light like ripples on dark water seen from above, fading into deep navy darkness, extreme minimalism, glow" },
+    { "id": "og-image", "prompt": "Wide 1200x630 composition: left half deep navy space with falling star streaks, right half a floating dark app window glowing with cyan interface elements and a ring of small glowing planets, soft ambient glow, premium software marketing aesthetic" },
+    { "id": "brand-object", "prompt": "A four-pointed star of white light embedded in a translucent glass rounded cube filled with swirling deep blue nebula fluid and tiny tide arcs, floating in darkness, studio product render, caustics, 8k" },
+    { "id": "icon-set", "prompt": "Minimal line icon set with soft outer glow, cyan #4fe3ff strokes on transparent: planet with ring, four-pointed star, infinity symbol, sound wave arc, rotary knob, downward arrow in circle, musical key — consistent 2px stroke, rounded caps" },
+    { "id": "launch-banner", "prompt": "Cinematic banner: a small glowing four-pointed star rising over a dark ocean horizon at night, its light reflected as a cyan tide path on the water, stars falling above like meteors, deep navy palette, vast negative space for headline text on the left" }
+  ]
+}

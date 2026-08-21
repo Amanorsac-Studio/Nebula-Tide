@@ -1,0 +1,86 @@
+name: Build Apple (macOS + iOS)
+
+on:
+  workflow_dispatch:
+    inputs:
+      beta_expiry:
+        description: "Beta expiry YYYY-MM-DD (empty = release build)"
+        required: false
+        default: ""
+  push:
+    tags: ["v*"]
+
+jobs:
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: >
+          cmake -S . -B build-mac -G Xcode
+          -DNEBULA_BETA_EXPIRY="${{ github.event.inputs.beta_expiry }}"
+
+      - name: Build (Standalone + VST3 + AU)
+        run: cmake --build build-mac --config Release --target NebulaTide_Standalone NebulaTide_VST3 NebulaTide_AU
+
+      # Optional codesign + notarize — runs only when signing secrets exist.
+      # Set repo secrets: MAC_CERT_P12 (base64), MAC_CERT_PASSWORD,
+      # APPLE_ID, APPLE_TEAM_ID, APPLE_APP_PASSWORD
+      - name: Sign & notarize
+        if: ${{ env.MAC_CERT_P12 != '' }}
+        env:
+          MAC_CERT_P12: ${{ secrets.MAC_CERT_P12 }}
+          MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          echo "$MAC_CERT_P12" | base64 -d > cert.p12
+          security create-keychain -p ci ci.keychain
+          security default-keychain -s ci.keychain
+          security unlock-keychain -p ci ci.keychain
+          security import cert.p12 -k ci.keychain -P "$MAC_CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k ci ci.keychain
+          IDENTITY=$(security find-identity -v -p codesigning ci.keychain | awk -F'"' 'NR==1{print $2}')
+          APP="build-mac/NebulaTide_artefacts/Release/Standalone/Nebula Tide.app"
+          codesign --deep --force --options runtime --sign "$IDENTITY" "$APP"
+          ditto -c -k --keepParent "$APP" NebulaTide-mac.zip
+          xcrun notarytool submit NebulaTide-mac.zip \
+            --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" --wait
+          xcrun stapler staple "$APP"
+
+      - name: Package artefacts
+        run: |
+          cd build-mac/NebulaTide_artefacts/Release
+          ditto -c -k --keepParent "Standalone/Nebula Tide.app" NebulaTide-macOS-app.zip
+          ditto -c -k --keepParent "VST3/Nebula Tide.vst3" NebulaTide-macOS-VST3.zip
+          ditto -c -k --keepParent "AU/Nebula Tide.component" NebulaTide-macOS-AU.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NebulaTide-macOS
+          path: build-mac/NebulaTide_artefacts/Release/NebulaTide-macOS-*.zip
+
+  ios:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure (iOS)
+        run: >
+          cmake -S . -B build-ios -G Xcode
+          -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0
+          -DNEBULA_BETA_EXPIRY="${{ github.event.inputs.beta_expiry }}"
+
+      # Unsigned device build proves the iOS code compiles; signing/archiving
+      # for TestFlight uses your existing per-app process (Xcode or fastlane).
+      - name: Build (unsigned)
+        run: >
+          cmake --build build-ios --config Release --target NebulaTide_Standalone --
+          CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NebulaTide-iOS-unsigned
+          path: build-ios/NebulaTide_artefacts/Release/Standalone

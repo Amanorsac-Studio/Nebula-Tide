@@ -1,0 +1,8 @@
+build/
+build-*/
+node_modules/
+installer/output/
+*.user
+.vs/
+presets/
+tools/trailer/frames/

@@ -1,0 +1,605 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Nebula Forge — Preset Builder</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+:root {
+  --bg:#020c16; --panel:#041826; --sea:#16b8d8; --bright:#4fe3ff;
+  --foam:#bdf3ff; --dim:#6fa8bd; --line:rgba(79,227,255,.18);
+}
+body {
+  background: radial-gradient(120% 90% at 50% 0%, #04283f 0%, var(--bg) 60%);
+  min-height:100vh; color:var(--foam);
+  font-family:"Cascadia Code", Consolas, monospace;
+  padding:28px 34px;
+}
+h1 { font-size:18px; letter-spacing:8px; font-weight:500; margin-bottom:4px;
+     text-shadow:0 0 18px rgba(79,227,255,.4); }
+.sub { color:var(--dim); font-size:12px; letter-spacing:2px; margin-bottom:24px; }
+
+.layout { display:flex; gap:24px; align-items:flex-start; }
+
+/* preset list */
+.list-col { width:250px; flex-shrink:0; display:flex; flex-direction:column; gap:16px; }
+.list { display:flex; flex-direction:column; gap:10px; }
+.aux-panel { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:12px; }
+.aux-title { font-size:11px; letter-spacing:2px; color:var(--bright); margin-bottom:8px; }
+.aux-sub { color:var(--dim); font-size:9px; letter-spacing:1px; }
+.aux-items { display:flex; flex-direction:column; gap:6px; margin-bottom:8px; }
+.aux-item { display:flex; align-items:center; gap:8px; font-size:11px; letter-spacing:1px;
+  background:#03121e; border:1px solid var(--line); border-radius:8px; padding:6px 9px; }
+.aux-item .anm { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.aux-item button { background:none; border:none; color:var(--sea); cursor:pointer; font-family:inherit; font-size:11px; }
+.aux-item button:hover { color:var(--bright); }
+.aux-item button.adel:hover { color:#ff7b7b; }
+.aux-item button.playing { color:var(--bright); }
+.aux-drop { border:1px dashed var(--line); border-radius:8px; padding:10px; text-align:center;
+  font-size:10px; color:var(--dim); letter-spacing:1px; cursor:pointer; }
+.aux-drop:hover, .aux-drop.drag { border-color:var(--bright); color:var(--bright); }
+.list-item {
+  background:var(--panel); border:1px solid var(--line); border-radius:12px;
+  padding:12px 14px; cursor:pointer; display:flex; align-items:center; gap:10px;
+  transition:border-color .2s;
+}
+.list-item:hover, .list-item.sel { border-color:var(--bright); }
+.list-item .swatch { width:14px; height:14px; border-radius:50%; flex-shrink:0; }
+.list-item .nm { font-size:13px; letter-spacing:1px; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.list-item .cnt { font-size:10px; color:var(--dim); }
+.newbtn {
+  background:none; border:1px dashed var(--line); border-radius:12px; color:var(--sea);
+  padding:12px; cursor:pointer; font-family:inherit; font-size:13px; letter-spacing:2px;
+}
+.newbtn:hover { border-color:var(--bright); color:var(--bright); }
+
+/* editor */
+.editor { flex:1; background:var(--panel); border:1px solid var(--line); border-radius:18px; padding:24px 28px; }
+.row { display:flex; gap:18px; align-items:center; flex-wrap:wrap; margin-bottom:18px; }
+label { font-size:10px; letter-spacing:3px; color:var(--dim); display:block; margin-bottom:6px; }
+input[type=text] {
+  background:#03121e; border:1px solid var(--line); border-radius:8px; color:var(--foam);
+  font-family:inherit; font-size:14px; letter-spacing:1px; padding:10px 12px; width:260px; outline:none;
+}
+input[type=text]:focus { border-color:var(--bright); }
+input[type=color] { width:52px; height:40px; border:1px solid var(--line); border-radius:8px; background:#03121e; cursor:pointer; }
+select, input[type=range] { accent-color:var(--sea); }
+select {
+  background:#03121e; border:1px solid var(--line); border-radius:8px; color:var(--foam);
+  font-family:inherit; font-size:13px; padding:9px 12px; outline:none;
+}
+.rv { display:flex; flex-direction:column; width:130px; }
+.rv output { font-size:11px; color:var(--sea); text-align:right; }
+
+.keys { display:grid; grid-template-columns:repeat(4, 1fr); gap:12px; margin-top:8px; }
+.slot {
+  border:1px solid var(--line); border-radius:12px; padding:10px; background:#03121e;
+  position:relative;
+}
+.slot.filled { border-color:rgba(79,227,255,.45); }
+.slot.drag { border-color:var(--bright); background:#07283c; }
+.slot .k { font-size:13px; letter-spacing:2px; color:var(--bright); margin-bottom:6px; display:flex; justify-content:space-between; }
+.slot .k .del { color:var(--dim); cursor:pointer; font-size:11px; }
+.slot .k .del:hover { color:#ff7b7b; }
+.slot canvas { width:100%; height:44px; display:block; border-radius:6px; background:#020c16; }
+.slot .hint { font-size:10px; color:var(--dim); text-align:center; padding:14px 4px; letter-spacing:1px; }
+.slot .controls { display:flex; gap:8px; margin-top:6px; }
+.slot button {
+  flex:1; background:none; border:1px solid var(--line); color:var(--sea); border-radius:6px;
+  font-family:inherit; font-size:10px; letter-spacing:1px; padding:5px 0; cursor:pointer;
+}
+.slot button:hover { border-color:var(--bright); color:var(--bright); }
+.slot button.playing { background:rgba(79,227,255,.15); color:var(--bright); border-color:var(--bright); }
+
+.actions { display:flex; gap:14px; margin-top:22px; }
+.save {
+  background:linear-gradient(160deg, #16b8d8, #0e7ea0); border:none; color:#02121c;
+  font-family:inherit; font-weight:bold; font-size:13px; letter-spacing:3px;
+  padding:13px 34px; border-radius:10px; cursor:pointer;
+}
+.save:hover { filter:brightness(1.15); }
+.danger { background:none; border:1px solid rgba(255,120,120,.4); color:#ff9b9b;
+  font-family:inherit; font-size:12px; letter-spacing:2px; padding:12px 20px; border-radius:10px; cursor:pointer; }
+.msg { font-size:12px; color:var(--sea); letter-spacing:1px; align-self:center; }
+.empty { color:var(--dim); font-size:13px; letter-spacing:1px; padding:60px; text-align:center; }
+
+/* trim editor */
+#trim-overlay { position:fixed; inset:0; background:rgba(1,6,12,.8); display:none;
+  align-items:center; justify-content:center; z-index:50; }
+#trim-overlay.open { display:flex; }
+.trim-box { background:var(--panel); border:1px solid rgba(79,227,255,.3); border-radius:16px;
+  padding:22px 26px; width:min(860px, 92vw); }
+.trim-box h2 { font-size:13px; letter-spacing:3px; color:var(--bright); font-weight:500; margin-bottom:4px; }
+.trim-box .tname { font-size:11px; color:var(--dim); letter-spacing:1px; margin-bottom:14px; }
+#trim-canvas { width:100%; height:160px; display:block; border-radius:10px; background:#020c16;
+  cursor:ew-resize; touch-action:none; }
+.trim-times { display:flex; justify-content:space-between; font-size:11px; color:var(--sea);
+  letter-spacing:1px; margin:8px 2px 14px; }
+.trim-actions { display:flex; gap:12px; align-items:center; }
+.trim-actions .hintt { font-size:10px; color:var(--dim); letter-spacing:1px; margin-left:auto; }
+</style>
+</head>
+<body>
+<h1>N E B U L A&nbsp;&nbsp;F O R G E</h1>
+<div class="sub">preset builder — upload pads in all 12 keys, colour them, shape their space, test the loop. saved presets ship inside Nebula Tide.</div>
+
+<div class="layout">
+  <div class="list-col">
+    <div class="list" id="list"></div>
+    <div class="aux-panel" id="aux-fx">
+      <div class="aux-title">★ FX SOUNDS <span class="aux-sub">clap, prayer… one-shots</span></div>
+      <div class="aux-items"></div>
+      <div class="aux-drop">drop audio here / click to add</div>
+    </div>
+    <div class="aux-panel" id="aux-textures">
+      <div class="aux-title">★ TEXTURES <span class="aux-sub">wind, rain, birds…</span></div>
+      <div class="aux-items"></div>
+      <div class="aux-drop">drop audio here / click to add</div>
+    </div>
+  </div>
+  <div class="editor" id="editor"><div class="empty">select a preset or create a new one</div></div>
+</div>
+
+<div id="trim-overlay">
+  <div class="trim-box">
+    <h2>✂ TRIM CLIP</h2>
+    <div class="tname" id="trim-name"></div>
+    <canvas id="trim-canvas"></canvas>
+    <div class="trim-times"><span id="trim-t0">0.00s</span><span id="trim-len"></span><span id="trim-t1"></span></div>
+    <div class="row" style="margin-bottom:12px">
+      <div class="rv"><label>FADE IN <output id="ofin">0.0s</output></label>
+        <input type="range" id="fadein" min="0" max="8" step="0.1" value="0"/></div>
+      <div class="rv"><label>FADE OUT <output id="ofout">0.0s</output></label>
+        <input type="range" id="fadeout" min="0" max="8" step="0.1" value="0"/></div>
+    </div>
+    <div class="trim-actions">
+      <button class="save" id="trim-apply">APPLY TRIM</button>
+      <button class="danger" id="trim-preview">▶ PREVIEW</button>
+      <button class="danger" id="trim-cancel">CANCEL</button>
+      <span class="hintt">drag the glowing edges to set start &amp; end — preview loops the kept region</span>
+    </div>
+  </div>
+</div>
+
+<script>
+const KEYS = ['C','Db','D','Eb','E','F','Gb','G','Ab','A','Bb','B'];
+let presets = [], selected = null;
+let auxLists = { fx: [], textures: [] };   // populated by refreshAux, used by editor dropdowns
+const audioCtx = new AudioContext();
+let playing = null;  // {source, gain, btn}
+
+async function refresh(keepSel) {
+  const r = await fetch('/api/presets').then(r => r.json());
+  presets = r.presets;
+  renderList();
+  if (keepSel && selected) {
+    const again = presets.find(p => p.name === selected.name);
+    if (again) { selected = again; renderEditor(); }
+  }
+}
+
+function renderList() {
+  const el = document.getElementById('list');
+  el.innerHTML = '';
+  for (const p of presets) {
+    const n = KEYS.filter(k => p.files[k]).length;
+    const d = document.createElement('div');
+    d.className = 'list-item' + (selected && selected.name === p.name ? ' sel' : '');
+    d.innerHTML = `<span class="swatch" style="background:${p.colour}"></span>
+                   <span class="nm">${p.name}</span><span class="cnt">${n}/12</span>`;
+    d.onclick = () => { selected = p; renderList(); renderEditor(); };
+    el.appendChild(d);
+  }
+  const nb = document.createElement('button');
+  nb.className = 'newbtn'; nb.textContent = '+ NEW PRESET';
+  nb.onclick = () => {
+    selected = { name:'', colour:'#4fe3ff', reverb:{type:'hall',mix:.4,size:.85,damp:.45}, files:{}, isNew:true };
+    renderList(); renderEditor();
+  };
+  el.appendChild(nb);
+}
+
+function renderEditor() {
+  stopPlayback();
+  const p = selected;
+  const el = document.getElementById('editor');
+  if (!p) { el.innerHTML = '<div class="empty">select a preset or create a new one</div>'; return; }
+  el.innerHTML = `
+    <div class="row">
+      <div><label>PRESET NAME</label><input type="text" id="nm" value="${p.name}" ${p.isNew?'':'readonly'}/></div>
+      <div><label>COLOUR</label><input type="color" id="col" value="${p.colour}"/></div>
+      <div><label>REVERB</label>
+        <select id="rtype">
+          ${['room','plate','hall'].map(t=>`<option ${p.reverb.type===t?'selected':''}>${t}</option>`).join('')}
+        </select></div>
+      <div class="rv"><label>MIX <output id="omix">${p.reverb.mix}</output></label>
+        <input type="range" id="rmix" min="0" max="1" step="0.01" value="${p.reverb.mix}"/></div>
+      <div class="rv"><label>SIZE <output id="osize">${p.reverb.size}</output></label>
+        <input type="range" id="rsize" min="0" max="1" step="0.01" value="${p.reverb.size}"/></div>
+      <div class="rv"><label>DAMP <output id="odamp">${p.reverb.damp}</output></label>
+        <input type="range" id="rdamp" min="0" max="1" step="0.01" value="${p.reverb.damp}"/></div>
+      <div><label>DEFAULT FX ★</label>
+        <select id="deffx"><option value="">— none —</option>
+          ${(auxLists.fx||[]).map(f=>`<option value="${f}" ${p.fx===f?'selected':''}>${f.replace(/\.[^.]+$/,'').replace(/_/g,' ')}</option>`).join('')}
+        </select></div>
+      <div><label>DEFAULT TEXTURE ★</label>
+        <select id="deftex"><option value="">— none —</option>
+          ${(auxLists.textures||[]).map(f=>`<option value="${f}" ${p.texture===f?'selected':''}>${f.replace(/\.[^.]+$/,'').replace(/_/g,' ')}</option>`).join('')}
+        </select></div>
+    </div>
+    <label>KEY PADS — drop an audio file on each key (or click to browse). these are your real recordings per key.</label>
+    <div class="keys" id="keys"></div>
+    <div class="actions">
+      <button class="save" id="save">SAVE PRESET</button>
+      ${p.isNew ? '' : '<button class="danger" id="del">DELETE</button>'}
+      <span class="msg" id="msg"></span>
+    </div>`;
+
+  for (const id of ['rmix','rsize','rdamp'])
+    el.querySelector('#'+id).oninput = e =>
+      el.querySelector('#o'+id.slice(1)).textContent = e.target.value;
+
+  const keysEl = el.querySelector('#keys');
+  for (const k of KEYS) keysEl.appendChild(buildSlot(p, k));
+
+  el.querySelector('#save').onclick = async () => {
+    const name = el.querySelector('#nm').value.trim();
+    if (!name) return msg('name required');
+    const body = {
+      name,
+      colour: el.querySelector('#col').value,
+      fx: el.querySelector('#deffx').value || null,
+      texture: el.querySelector('#deftex').value || null,
+      reverb: {
+        type: el.querySelector('#rtype').value,
+        mix: +el.querySelector('#rmix').value,
+        size: +el.querySelector('#rsize').value,
+        damp: +el.querySelector('#rdamp').value
+      }
+    };
+    await fetch('/api/preset', { method:'POST', body: JSON.stringify(body) });
+    p.isNew = false; p.name = name;
+    msg('saved ✓ — will be embedded on next app build');
+    refresh(true);
+  };
+  const del = el.querySelector('#del');
+  if (del) del.onclick = async () => {
+    if (!confirm(`Delete preset "${p.name}" and all its key files?`)) return;
+    await fetch('/api/preset?name=' + encodeURIComponent(p.name), { method:'DELETE' });
+    selected = null; refresh();
+  };
+}
+
+function msg(t) { document.getElementById('msg').textContent = t; }
+
+function buildSlot(p, key) {
+  const d = document.createElement('div');
+  const file = p.files?.[key];
+  d.className = 'slot' + (file ? ' filled' : '');
+  d.innerHTML = `<div class="k"><span>${key}</span>${file?'<span class="del" title="slot will be replaced when you drop a new file">'+file+'</span>':''}</div>`;
+
+  if (file) {
+    const cv = document.createElement('canvas');
+    d.appendChild(cv);
+    drawWave(cv, file);
+    const controls = document.createElement('div');
+    controls.className = 'controls';
+    const play = document.createElement('button');
+    play.textContent = '▶ LOOP TEST';
+    play.onclick = () => togglePlay(file, play);
+    controls.appendChild(play);
+    d.appendChild(controls);
+  } else {
+    const hint = document.createElement('div');
+    hint.className = 'hint';
+    hint.textContent = 'drop audio here / click';
+    d.appendChild(hint);
+  }
+
+  d.ondragover = e => { e.preventDefault(); d.classList.add('drag'); };
+  d.ondragleave = () => d.classList.remove('drag');
+  d.ondrop = e => { e.preventDefault(); d.classList.remove('drag');
+    if (e.dataTransfer.files[0]) uploadFile(p, key, e.dataTransfer.files[0]); };
+  d.onclick = e => {
+    if (e.target.tagName === 'BUTTON' || e.target.tagName === 'CANVAS') return;
+    const inp = document.createElement('input');
+    inp.type = 'file'; inp.accept = '.wav,.mp3,.ogg,.flac,.aiff';
+    inp.onchange = () => inp.files[0] && uploadFile(p, key, inp.files[0]);
+    inp.click();
+  };
+  return d;
+}
+
+async function uploadFile(p, key, f) {
+  const name = (document.querySelector('#nm')?.value || p.name).trim();
+  if (!name) return msg('set the preset name first');
+  const ext = '.' + f.name.split('.').pop().toLowerCase();
+  msg(`uploading ${key}…`);
+  await fetch(`/api/upload?preset=${encodeURIComponent(name)}&key=${key}&ext=${ext}`,
+              { method:'POST', body: await f.arrayBuffer() });
+  // ensure the preset exists in the manifest so it lists
+  if (p.isNew) document.querySelector('#save').click();
+  else { msg(`${key} uploaded ✓`); refresh(true); }
+}
+
+async function drawWave(canvas, file) {
+  const buf = await fetch('/api/file?name=' + encodeURIComponent(file)).then(r => r.arrayBuffer());
+  let audio;
+  try { audio = await audioCtx.decodeAudioData(buf); } catch (_) { return; }
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width = canvas.offsetWidth * 2, H = canvas.height = 88;
+  ctx.fillStyle = '#020c16'; ctx.fillRect(0, 0, W, H);
+  const data = audio.getChannelData(0);
+  const step = Math.max(1, Math.floor(data.length / W));
+  ctx.strokeStyle = '#16b8d8'; ctx.beginPath();
+  for (let x = 0; x < W; x++) {
+    let min = 1, max = -1;
+    for (let i = x*step; i < (x+1)*step && i < data.length; i++)
+      { if (data[i] < min) min = data[i]; if (data[i] > max) max = data[i]; }
+    ctx.moveTo(x, H/2 + min * H/2 * .9);
+    ctx.lineTo(x, H/2 + max * H/2 * .9);
+  }
+  ctx.stroke();
+}
+
+function stopPlayback() {
+  if (playing) {
+    try { playing.gain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.15);
+          playing.source.stop(audioCtx.currentTime + 0.2); } catch (_) {}
+    playing.btn.classList.remove('playing');
+    playing.btn.textContent = playing.restore || '▶ LOOP TEST';
+    playing = null;
+  }
+}
+
+async function togglePlay(file, btn) {
+  if (playing && playing.file === file) { stopPlayback(); return; }
+  stopPlayback();
+  await audioCtx.resume();
+  const buf = await fetch('/api/file?name=' + encodeURIComponent(file)).then(r => r.arrayBuffer());
+  let audio;
+  try { audio = await audioCtx.decodeAudioData(buf); } catch (_) { return; }
+  const source = audioCtx.createBufferSource();
+  source.buffer = audio; source.loop = true;   // exactly how the app loops it
+  const gain = audioCtx.createGain();
+  gain.gain.value = 0; gain.gain.linearRampToValueAtTime(1, audioCtx.currentTime + 0.15);
+  source.connect(gain).connect(audioCtx.destination);
+  source.start();
+  playing = { source, gain, btn, file };
+  btn.classList.add('playing'); btn.textContent = '■ STOP';
+}
+
+// ── FX / texture panels (global, preset-independent) ──
+async function refreshAux() {
+  const data = await fetch('/api/aux').then(r => r.json());
+  auxLists = data;
+  for (const cat of ['fx', 'textures']) {
+    const panel = document.getElementById('aux-' + cat);
+    const items = panel.querySelector('.aux-items');
+    items.innerHTML = '';
+    for (const f of (data[cat] || [])) {
+      const row = document.createElement('div');
+      row.className = 'aux-item';
+      row.innerHTML = `<span class="anm">${f.replace(/\.[^.]+$/, '').replace(/_/g, ' ')}</span>`;
+      const play = document.createElement('button');
+      play.textContent = '▶';
+      play.onclick = () => toggleAuxPlay(cat, f, play);
+      const trim = document.createElement('button');
+      trim.textContent = '✂'; trim.title = 'trim start / end';
+      trim.onclick = () => openTrim(cat, f);
+      row.appendChild(trim);
+      const del = document.createElement('button');
+      del.className = 'adel'; del.textContent = '✕';
+      del.onclick = async () => {
+        if (!confirm(`Delete ${cat} sound "${f}"?`)) return;
+        await fetch(`/api/aux?cat=${cat}&name=${encodeURIComponent(f)}`, { method: 'DELETE' });
+        refreshAux();
+      };
+      row.appendChild(play); row.appendChild(del);
+      items.appendChild(row);
+    }
+    const drop = panel.querySelector('.aux-drop');
+    drop.onclick = () => {
+      const inp = document.createElement('input');
+      inp.type = 'file'; inp.accept = '.wav,.mp3,.ogg,.flac,.aiff'; inp.multiple = true;
+      inp.onchange = () => uploadAux(cat, [...inp.files]);
+      inp.click();
+    };
+    drop.ondragover = e => { e.preventDefault(); drop.classList.add('drag'); };
+    drop.ondragleave = () => drop.classList.remove('drag');
+    drop.ondrop = e => { e.preventDefault(); drop.classList.remove('drag');
+      uploadAux(cat, [...e.dataTransfer.files]); };
+  }
+}
+
+async function uploadAux(cat, files) {
+  for (const f of files) {
+    const name = f.name.replace(/\.[^.]+$/, '');
+    const ext = '.' + f.name.split('.').pop().toLowerCase();
+    await fetch(`/api/aux/upload?cat=${cat}&name=${encodeURIComponent(name)}&ext=${ext}`,
+                { method: 'POST', body: await f.arrayBuffer() });
+  }
+  refreshAux();
+}
+
+async function toggleAuxPlay(cat, file, btn) {
+  if (playing && playing.file === cat + '/' + file) { stopPlayback(); return; }
+  stopPlayback();
+  await audioCtx.resume();
+  const buf = await fetch(`/api/aux/file?cat=${cat}&name=${encodeURIComponent(file)}`).then(r => r.arrayBuffer());
+  let audio;
+  try { audio = await audioCtx.decodeAudioData(buf); } catch (_) { return; }
+  const source = audioCtx.createBufferSource();
+  source.buffer = audio;   // one-shot preview, exactly like the app's default
+  const gain = audioCtx.createGain();
+  source.connect(gain).connect(audioCtx.destination);
+  source.onended = () => { if (playing && playing.btn === btn) stopPlayback(); };
+  source.start();
+  playing = { source, gain, btn, file: cat + '/' + file, restore: '▶' };
+  btn.classList.add('playing');
+  btn.textContent = '■';
+}
+
+// ── trim editor ──
+const trimState = { cat:null, file:null, audio:null, t0:0, t1:0, fin:0, fout:0, dragging:null, src:null };
+const trimOv = document.getElementById('trim-overlay');
+const trimCv = document.getElementById('trim-canvas');
+
+async function openTrim(cat, file) {
+  stopPlayback(); stopTrimPreview();
+  const buf = await fetch(`/api/aux/file?cat=${cat}&name=${encodeURIComponent(file)}`).then(r => r.arrayBuffer());
+  let audio; try { audio = await audioCtx.decodeAudioData(buf); } catch (_) { return alert('cannot decode'); }
+  Object.assign(trimState, { cat, file, audio, t0: 0, t1: audio.duration, fin: 0, fout: 0, dragging: null });
+  document.getElementById('fadein').value = 0;  document.getElementById('ofin').textContent = '0.0s';
+  document.getElementById('fadeout').value = 0; document.getElementById('ofout').textContent = '0.0s';
+  document.getElementById('trim-name').textContent =
+    `${cat} / ${file}  —  ${audio.duration.toFixed(2)}s @ ${audio.sampleRate} Hz`;
+  trimOv.classList.add('open');
+  drawTrim();
+}
+
+function drawTrim() {
+  const { audio, t0, t1 } = trimState;
+  const ctx = trimCv.getContext('2d');
+  const W = trimCv.width = trimCv.offsetWidth * 2, H = trimCv.height = 320;
+  ctx.fillStyle = '#020c16'; ctx.fillRect(0, 0, W, H);
+  const data = audio.getChannelData(0);
+  const step = Math.max(1, Math.floor(data.length / W));
+  ctx.strokeStyle = '#16b8d8'; ctx.beginPath();
+  for (let x = 0; x < W; x++) {
+    let mn = 1, mx = -1;
+    for (let i = x*step; i < (x+1)*step && i < data.length; i++)
+      { if (data[i] < mn) mn = data[i]; if (data[i] > mx) mx = data[i]; }
+    ctx.moveTo(x, H/2 + mn*H/2*.92); ctx.lineTo(x, H/2 + mx*H/2*.92);
+  }
+  ctx.stroke();
+  const x0 = t0/audio.duration*W, x1 = t1/audio.duration*W;
+  ctx.fillStyle = 'rgba(2,12,22,.82)';                   // dimmed cut regions
+  ctx.fillRect(0, 0, x0, H); ctx.fillRect(x1, 0, W-x1, H);
+  for (const [x, label] of [[x0,'S'], [x1,'E']]) {       // glowing markers
+    ctx.shadowColor = '#4fe3ff'; ctx.shadowBlur = 14;
+    ctx.fillStyle = '#4fe3ff'; ctx.fillRect(x-2, 0, 4, H);
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = '#02121c'; ctx.fillRect(x-14, label==='S'?0:H-26, 28, 26);
+    ctx.font = '20px monospace'; ctx.fillStyle = '#4fe3ff'; ctx.textAlign = 'center';
+    ctx.fillText(label, x, label==='S'?19:H-7);
+  }
+  // fade ramps inside the kept region
+  const { fin, fout } = trimState;
+  ctx.strokeStyle = '#ffc96b'; ctx.lineWidth = 3;
+  if (fin > 0) {
+    const xf = (t0 + Math.min(fin, t1-t0)) / audio.duration * W;
+    ctx.beginPath(); ctx.moveTo(x0, H); ctx.lineTo(xf, 0); ctx.stroke();
+    ctx.fillStyle = 'rgba(255,201,107,.10)';
+    ctx.beginPath(); ctx.moveTo(x0, H); ctx.lineTo(xf, 0); ctx.lineTo(x0, 0); ctx.closePath(); ctx.fill();
+  }
+  if (fout > 0) {
+    const xf = (t1 - Math.min(fout, t1-t0)) / audio.duration * W;
+    ctx.beginPath(); ctx.moveTo(xf, 0); ctx.lineTo(x1, H); ctx.stroke();
+    ctx.fillStyle = 'rgba(255,201,107,.10)';
+    ctx.beginPath(); ctx.moveTo(xf, 0); ctx.lineTo(x1, H); ctx.lineTo(x1, 0); ctx.closePath(); ctx.fill();
+  }
+  ctx.lineWidth = 1;
+
+  document.getElementById('trim-t0').textContent = t0.toFixed(2)+'s';
+  document.getElementById('trim-t1').textContent = t1.toFixed(2)+'s';
+  document.getElementById('trim-len').textContent = 'kept: '+(t1-t0).toFixed(2)+'s';
+}
+
+for (const [id, key, out] of [['fadein','fin','ofin'], ['fadeout','fout','ofout']])
+  document.getElementById(id).oninput = e => {
+    trimState[key] = +e.target.value;
+    document.getElementById(out).textContent = (+e.target.value).toFixed(1)+'s';
+    drawTrim();
+  };
+
+// the kept region with fades applied, as a fresh AudioBuffer — the single
+// source of truth for both preview and apply
+function makeTrimmedBuffer() {
+  const { audio, t0, t1, fin, fout } = trimState;
+  const sr = audio.sampleRate, ch = Math.min(2, audio.numberOfChannels);
+  const i0 = Math.floor(t0*sr), n = Math.floor((t1-t0)*sr);
+  const out = new AudioBuffer({ numberOfChannels: ch, length: n, sampleRate: sr });
+  const nin = Math.min(Math.floor(fin*sr), n), nout = Math.min(Math.floor(fout*sr), n);
+  for (let c = 0; c < ch; c++) {
+    const s = audio.getChannelData(c), d = out.getChannelData(c);
+    for (let i = 0; i < n; i++) {
+      let v = s[i0+i];
+      if (i < nin) v *= i / nin;                       // fade in
+      if (i >= n - nout) v *= (n - i) / nout;          // fade out
+      d[i] = v;
+    }
+  }
+  return out;
+}
+
+function trimPos(e) {
+  const r = trimCv.getBoundingClientRect();
+  return Math.min(Math.max((e.clientX - r.left) / r.width, 0), 1) * trimState.audio.duration;
+}
+trimCv.onpointerdown = e => {
+  trimCv.setPointerCapture(e.pointerId);
+  const t = trimPos(e);
+  trimState.dragging = Math.abs(t-trimState.t0) < Math.abs(t-trimState.t1) ? 't0' : 't1';
+  trimCv.onpointermove(e);
+};
+trimCv.onpointermove = e => {
+  if (!trimState.dragging) return;
+  const t = trimPos(e);
+  if (trimState.dragging === 't0') trimState.t0 = Math.min(t, trimState.t1 - 0.1);
+  else trimState.t1 = Math.max(t, trimState.t0 + 0.1);
+  drawTrim();
+};
+trimCv.onpointerup = () => trimState.dragging = null;
+
+function stopTrimPreview() {
+  if (trimState.src) { try { trimState.src.stop(); } catch(_) {} trimState.src = null; }
+  const b = document.getElementById('trim-preview');
+  if (b) b.textContent = '▶ PREVIEW';
+}
+document.getElementById('trim-preview').onclick = async () => {
+  if (trimState.src) return stopTrimPreview();
+  await audioCtx.resume();
+  const s = audioCtx.createBufferSource();
+  s.buffer = makeTrimmedBuffer(); s.loop = true;   // hear exactly what gets saved
+  s.connect(audioCtx.destination);
+  s.start();
+  trimState.src = s;
+  document.getElementById('trim-preview').textContent = '■ STOP';
+};
+document.getElementById('trim-cancel').onclick = () => { stopTrimPreview(); trimOv.classList.remove('open'); };
+
+document.getElementById('trim-apply').onclick = async () => {
+  stopTrimPreview();
+  const { cat, file } = trimState;
+  const trimmed = makeTrimmedBuffer();               // trim + fades applied
+  const sr = trimmed.sampleRate, ch = trimmed.numberOfChannels, n = trimmed.length;
+  // encode as 16-bit WAV, re-upload (server re-normalizes + FLACs it)
+  const bytes = new DataView(new ArrayBuffer(44 + n*ch*2));
+  const wstr = (o,s2) => { for (let i=0;i<s2.length;i++) bytes.setUint8(o+i, s2.charCodeAt(i)); };
+  wstr(0,'RIFF'); bytes.setUint32(4, 36+n*ch*2, true); wstr(8,'WAVE');
+  wstr(12,'fmt '); bytes.setUint32(16,16,true); bytes.setUint16(20,1,true);
+  bytes.setUint16(22,ch,true); bytes.setUint32(24,sr,true);
+  bytes.setUint32(28,sr*ch*2,true); bytes.setUint16(32,ch*2,true); bytes.setUint16(34,16,true);
+  wstr(36,'data'); bytes.setUint32(40,n*ch*2,true);
+  for (let c=0;c<ch;c++) {
+    const d = trimmed.getChannelData(c);
+    for (let i=0;i<n;i++) {
+      const v = Math.max(-1, Math.min(1, d[i]));
+      bytes.setInt16(44 + (i*ch+c)*2, v*32767|0, true);
+    }
+  }
+  const name = file.replace(/\.[^.]+$/,'');
+  document.getElementById('trim-apply').textContent = 'SAVING...';
+  await fetch(`/api/aux/upload?cat=${cat}&name=${encodeURIComponent(name)}&ext=.wav`,
+              { method:'POST', body: bytes.buffer });
+  document.getElementById('trim-apply').textContent = 'APPLY TRIM';
+  trimOv.classList.remove('open');
+  refreshAux();
+};
+
+refresh();
+refreshAux();
+</script>
+</body>
+</html>
