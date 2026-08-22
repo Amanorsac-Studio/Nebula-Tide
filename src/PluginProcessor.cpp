@@ -17,25 +17,38 @@ void PadVoice::render (juce::AudioBuffer<float>& out, int numSamples,
     const int srcChans = buffer.getNumChannels();
     const int outChans = out.getNumChannels();
 
+    // loop crossfade region: the tail [xfStart, len) blends into the head [0, xf)
+    const double xf = juce::jmin ((double) srcLen * 0.25, (double) gLoopBlendSeconds.load() * sourceSampleRate);
+    const double xfStart = (double) srcLen - xf;
+
     for (int i = 0; i < numSamples; ++i)
     {
         if (gain < targetGain)      gain = juce::jmin (targetGain, gain + fadePerSample);
         else if (gain > targetGain) gain = juce::jmax (targetGain, gain - fadePerSample);
 
-        const int idx0 = (int) position;
-        const int idx1 = (idx0 + 1) % srcLen;           // wrap → seamless loop
-        const float frac = (float) (position - idx0);
+        const bool inXf = xf > 1.0 && position >= xfStart;
+        float gOut = 1.0f, gIn = 0.0f;
+        double headPos = 0.0;
+        if (inXf)
+        {
+            const double t = juce::jlimit (0.0, 1.0, (position - xfStart) / xf);
+            gOut = (float) std::cos (t * juce::MathConstants<double>::halfPi);   // equal-power
+            gIn  = (float) std::sin (t * juce::MathConstants<double>::halfPi);
+            headPos = position - xfStart;
+        }
 
         for (int ch = 0; ch < outChans; ++ch)
         {
             const float* src = buffer.getReadPointer (juce::jmin (ch, srcChans - 1));
-            const float sample = src[idx0] + frac * (src[idx1] - src[idx0]);
+            float sample = readInterp (src, srcLen, position);
+            if (inXf)
+                sample = sample * gOut + readInterp (src, srcLen, headPos) * gIn;
             out.addSample (ch, i, sample * gain);
         }
 
         position += ratio;
         if (position >= srcLen)
-            position -= srcLen;
+            position -= xfStart;   // continue from where the head blend left off
     }
 
     if (gain <= 0.0001f && targetGain <= 0.0001f)
@@ -55,28 +68,41 @@ void AuxVoice::render (juce::AudioBuffer<float>& out, int numSamples,
     const int outChans = out.getNumChannels();
     const float attackPerSample = 1.0f / (float) (0.02 * deviceSampleRate);   // 20 ms anti-click
 
+    const bool loop = looping.load();
+    const double xf = loop ? juce::jmin ((double) srcLen * 0.25, (double) gLoopBlendSeconds.load() * sourceSampleRate) : 0.0;
+    const double xfStart = (double) srcLen - xf;
+
     for (int i = 0; i < numSamples; ++i)
     {
         if (gain < targetGain)      gain = juce::jmin (targetGain, gain + attackPerSample);
         else if (gain > targetGain) gain = juce::jmax (targetGain, gain - releasePerSample);
 
-        const int idx0 = (int) position;
-        const int idx1 = (idx0 + 1) % srcLen;
-        const float frac = (float) (position - idx0);
+        const bool inXf = xf > 1.0 && position >= xfStart;
+        float gOut = 1.0f, gIn = 0.0f;
+        double headPos = 0.0;
+        if (inXf)
+        {
+            const double t = juce::jlimit (0.0, 1.0, (position - xfStart) / xf);
+            gOut = (float) std::cos (t * juce::MathConstants<double>::halfPi);
+            gIn  = (float) std::sin (t * juce::MathConstants<double>::halfPi);
+            headPos = position - xfStart;
+        }
 
         const float vol = volume.load();
         for (int ch = 0; ch < outChans; ++ch)
         {
             const float* src = buffer.getReadPointer (juce::jmin (ch, srcChans - 1));
-            const float sample = src[idx0] + frac * (src[idx1] - src[idx0]);
+            float sample = readInterp (src, srcLen, position);
+            if (inXf)
+                sample = sample * gOut + readInterp (src, srcLen, headPos) * gIn;
             out.addSample (ch, i, sample * gain * vol);
         }
 
         position += ratio;
         if (position >= srcLen)
         {
-            if (looping.load())
-                position -= srcLen;
+            if (loop)
+                position -= xfStart;   // continue from where the head blend left off
             else
             {
                 active = false;
@@ -130,13 +156,27 @@ static void splitNameAndKey (const juce::String& stem, juce::String& outName, in
 // Locates the sound library. Walks upward from the running binary (so it works
 // from inside a .vst3/.component bundle), then falls back to the shared
 // per-machine library the installer writes. First existing folder wins.
+// A "Stems" subfolder inside the library acts as a TEST library: when it
+// contains audio, the app loads from it instead (same layout: pads in the
+// root, fx/ and textures/ inside). Rename or delete it to go back.
+static juce::File preferTestLibrary (juce::File dir)
+{
+    const auto stems = dir.getChildFile ("Stems");
+    if (! stems.isDirectory()) return dir;
+    const char* audio = "*.flac;*.wav;*.mp3;*.ogg;*.aiff";
+    const int n = stems.getNumberOfChildFiles (juce::File::findFiles, audio)
+                + stems.getChildFile ("fx").getNumberOfChildFiles (juce::File::findFiles, audio)
+                + stems.getChildFile ("textures").getNumberOfChildFiles (juce::File::findFiles, audio);
+    return n > 0 ? stems : dir;   // only an actual test library takes over
+}
+
 static juce::File findPresetsDir()
 {
     auto dir = juce::File::getSpecialLocation (juce::File::currentExecutableFile).getParentDirectory();
     for (int up = 0; up < 6 && dir.exists(); ++up)
     {
         const auto candidate = dir.getChildFile ("presets");
-        if (candidate.isDirectory()) return candidate;
+        if (candidate.isDirectory()) return preferTestLibrary (candidate);
         dir = dir.getParentDirectory();
     }
 
@@ -147,7 +187,7 @@ static juce::File findPresetsDir()
             .getChildFile ("Nebula Tide").getChildFile ("presets"),           // Program Files install
         juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
             .getChildFile ("Nebula Tide").getChildFile ("presets") })        // per-user
-        if (candidate.isDirectory()) return candidate;
+        if (candidate.isDirectory()) return preferTestLibrary (candidate);
 
     return {};
 }
@@ -307,6 +347,7 @@ void NebulaTideProcessor::scanPresets()
     // Disk first — a "presets" folder near the executable always wins, so pads
     // can be updated without rebuilding the app.
     const auto presetsDir = findPresetsDir();
+    usingTestLibrary = presetsDir.getFileName() == "Stems";
     if (presetsDir.isDirectory())
         for (auto& f : presetsDir.findChildFiles (juce::File::findFiles, false, "*.wav;*.mp3;*.ogg;*.flac;*.aiff"))
         {
@@ -835,6 +876,7 @@ void NebulaTideProcessor::getStateInformation (juce::MemoryBlock& dest)
     state.setProperty ("midimap", binds.joinIntoString (","), nullptr);
     state.setProperty ("noteGate", noteGate.load(), nullptr);
     state.setProperty ("showKeyboard", showKeyboard.load(), nullptr);
+    state.setProperty ("loopBlend", (double) gLoopBlendSeconds.load(), nullptr);
     for (int c = 0; c < 2; ++c)
     {
         state.setProperty ("auxVol" + juce::String (c), auxVoices[c].volume.load(), nullptr);
@@ -862,6 +904,8 @@ void NebulaTideProcessor::setStateInformation (const void* data, int size)
         noteGate.store ((bool) state.getProperty ("noteGate"));
     if (state.hasProperty ("showKeyboard"))
         showKeyboard.store ((bool) state.getProperty ("showKeyboard"));
+    if (state.hasProperty ("loopBlend"))
+        gLoopBlendSeconds.store (juce::jlimit (0.1f, 6.0f, (float) (double) state.getProperty ("loopBlend")));
 
     const int pad = state.getProperty ("currentPad", -1);
     const int key = state.getProperty ("currentKey", 0);

@@ -1,5 +1,6 @@
 #include "PluginEditor.h"
 #include <juce_audio_plugin_client/Standalone/juce_StandaloneFilterWindow.h>
+#include <map>
 
 namespace colours
 {
@@ -21,6 +22,67 @@ namespace colours
 }
 
 //==============================================================================
+// HD helpers
+namespace ui
+{
+    // A true Gaussian bloom sprite per colour, rendered once and cached; drawing
+    // it scaled is far cheaper than blurring live and looks like real light.
+    void drawBloom (juce::Graphics& g, juce::Point<float> c, float radius,
+                    juce::Colour colour, float intensity)
+    {
+        static std::map<juce::uint32, juce::Image> cache;
+        const auto key = colour.withAlpha (1.0f).getARGB();
+        auto it = cache.find (key);
+        if (it == cache.end())
+        {
+            if (cache.size() > 48) cache.clear();
+            const int n = 192;
+            juce::Image img (juce::Image::ARGB, n, n, true);
+            {
+                juce::Image::BitmapData bd (img, juce::Image::BitmapData::writeOnly);
+                const float half = n * 0.5f;
+                for (int y = 0; y < n; ++y)
+                    for (int x = 0; x < n; ++x)
+                    {
+                        const float dx = (x + 0.5f - half) / half, dy = (y + 0.5f - half) / half;
+                        const float d2 = dx * dx + dy * dy;
+                        const float a = d2 >= 1.0f ? 0.0f : std::exp (-d2 * 4.5f) * (1.0f - d2);   // gaussian, zero at edge
+                        bd.setPixelColour (x, y, colour.withAlpha (a));
+                    }
+            }
+            it = cache.emplace (key, img).first;
+        }
+        g.setOpacity (juce::jlimit (0.0f, 1.0f, intensity));
+        g.drawImage (it->second, juce::Rectangle<float> (c.x - radius, c.y - radius, radius * 2.0f, radius * 2.0f));
+        g.setOpacity (1.0f);
+    }
+
+    static juce::String pickTypeface (std::initializer_list<const char*> prefs)
+    {
+        static const juce::StringArray installed = juce::Font::findAllTypefaceNames();
+        for (auto* p : prefs)
+            if (installed.contains (p)) return p;
+        return juce::Font::getDefaultSansSerifFontName();
+    }
+
+    juce::Font titleFont (float size)
+    {
+        static const juce::String name = pickTypeface ({ "Bahnschrift Light", "Bahnschrift", "Avenir Next", "Helvetica Neue", "Roboto", "Segoe UI" });
+        return juce::Font (juce::FontOptions (name, size, juce::Font::plain)).withExtraKerningFactor (0.32f);
+    }
+    juce::Font labelFont (float size)
+    {
+        static const juce::String name = pickTypeface ({ "Bahnschrift SemiCondensed", "Bahnschrift", "Avenir Next Condensed", "Avenir Next", "Roboto", "Segoe UI" });
+        return juce::Font (juce::FontOptions (name, size, juce::Font::plain)).withExtraKerningFactor (0.24f);
+    }
+    juce::Font bodyFont (float size)
+    {
+        static const juce::String name = pickTypeface ({ "Bahnschrift", "Segoe UI", "Avenir Next", "Helvetica Neue", "Roboto" });
+        return juce::Font (juce::FontOptions (name, size, juce::Font::plain));
+    }
+}
+
+//==============================================================================
 void NebulaBackground::paint (juce::Graphics& g)
 {
     auto b = getLocalBounds().toFloat();
@@ -33,8 +95,20 @@ void NebulaBackground::paint (juce::Graphics& g)
     g.setGradientFill (grad);
     g.fillAll();
 
-    // stars streaking past — z-projected, with motion streaks toward the viewer
+    // nebula cloud layer: three huge soft blooms drifting slowly in the theme
+    // colour — gives the sky depth instead of a flat gradient
+    const float W = b.getWidth(), H = b.getHeight();
+    ui::drawBloom (g, { W * (0.30f + 0.06f * std::sin (phase * 0.11f)), H * (0.35f + 0.05f * std::cos (phase * 0.09f)) },
+                   W * 0.55f, colours::sea, 0.16f + energy * 0.10f);
+    ui::drawBloom (g, { W * (0.72f + 0.05f * std::cos (phase * 0.07f)), H * (0.55f + 0.06f * std::sin (phase * 0.12f)) },
+                   W * 0.48f, colours::seaBright, 0.09f + energy * 0.08f);
+    ui::drawBloom (g, { W * (0.50f + 0.08f * std::sin (phase * 0.05f)), H * 0.95f },
+                   W * 0.6f, colours::sea.withRotatedHue (0.08f), 0.10f);
+
+    // stars streaking past — z-projected, with motion streaks toward the viewer.
+    // Each star has its own colour temperature and twinkle.
     const float focal = juce::jmin (b.getWidth(), b.getHeight()) * 0.9f;
+    const juce::Colour warm (0xffffe2b8), cool (0xffb9dcff);
     for (auto& s : stars)
     {
         const float px = cx + (s.x / s.z) * focal * 0.5f;
@@ -44,15 +118,19 @@ void NebulaBackground::paint (juce::Graphics& g)
 
         const float closeness = juce::jlimit (0.0f, 1.0f, 1.0f - s.z);
         const float sz = s.size * (0.5f + closeness * 2.2f);
+        const float twinkle = 0.82f + 0.18f * std::sin (phase * 2.3f + s.warmth * 12.0f);
+        const auto starCol = colours::foam.interpolatedWith (s.warmth > 0.5f ? warm : cool, 0.55f);
 
         // streak: from a slightly deeper z toward current position
         const float zBehind = s.z + 0.045f + energy * 0.05f;
         const float bx = cx + (s.x / zBehind) * focal * 0.5f;
         const float by = cy + (s.y / zBehind) * focal * 0.5f;
 
-        g.setColour (colours::foam.withAlpha (0.10f + closeness * 0.30f));
+        g.setColour (starCol.withAlpha ((0.10f + closeness * 0.30f) * twinkle));
         g.drawLine (bx, by, px, py, sz * 0.6f);
-        g.setColour (colours::foam.withAlpha (0.25f + closeness * 0.55f));
+        if (closeness > 0.55f)   // near stars get a soft bloom
+            ui::drawBloom (g, { px, py }, sz * 3.0f, starCol, 0.35f * closeness * twinkle);
+        g.setColour (starCol.withAlpha ((0.25f + closeness * 0.55f) * twinkle));
         g.fillEllipse (px - sz * 0.5f, py - sz * 0.5f, sz, sz);
     }
 
@@ -67,12 +145,9 @@ void NebulaBackground::paint (juce::Graphics& g)
         g.strokePath (p, juce::PathStrokeType (2.0f + energy * 3.0f));
     }
 
-    // breathing glow at the centre of the fall
-    const float glowR = 170.0f + energy * 110.0f + std::sin (phase * 0.9f) * 16.0f;
-    juce::ColourGradient glow (colours::sea.withAlpha (0.12f + energy * 0.22f), cx, cy,
-                               juce::Colours::transparentBlack, cx + glowR, cy, true);
-    g.setGradientFill (glow);
-    g.fillEllipse (cx - glowR, cy - glowR, glowR * 2.0f, glowR * 2.0f);
+    // breathing bloom at the centre of the fall
+    const float glowR = 190.0f + energy * 120.0f + std::sin (phase * 0.9f) * 18.0f;
+    ui::drawBloom (g, { cx, cy }, glowR, colours::seaBright, 0.22f + energy * 0.35f);
 }
 
 //==============================================================================
@@ -94,11 +169,8 @@ void NebulaLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int w
     const auto centre = bounds.getCentre();
     const float angle = startAngle + pos * (endAngle - startAngle);
 
-    // outer halo — the drama
-    juce::ColourGradient halo (colours::sea.withAlpha (0.30f), centre.x, centre.y,
-                               juce::Colours::transparentBlack, centre.x + radius * 1.9f, centre.y, true);
-    g.setGradientFill (halo);
-    g.fillEllipse (centre.x - radius * 1.9f, centre.y - radius * 1.9f, radius * 3.8f, radius * 3.8f);
+    // outer bloom — the drama
+    ui::drawBloom (g, centre, radius * 2.1f, colours::seaBright, 0.45f);
 
     // background track arc
     juce::Path track;
@@ -176,10 +248,12 @@ void PadButton::paintButton (juce::Graphics& g, bool highlighted, bool down)
     if (isActivePad)
     {
         const float breathe = 0.5f + 0.5f * std::sin (glowPhase);
-        g.setColour (tint.withAlpha (0.35f + breathe * 0.35f));
+        // glow bleeds out past the edges like real light; the outline re-draws on top
+        ui::drawBloom (g, b.getCentre(), b.getWidth() * (0.78f + breathe * 0.08f), tint, 0.45f + breathe * 0.25f);
+        g.setGradientFill (juce::ColourGradient (top, b.getX(), b.getY(), bottom, b.getX(), b.getBottom(), false));
+        g.fillRoundedRectangle (b, corner);
+        g.setColour (tint.withAlpha (0.45f + breathe * 0.35f));
         g.drawRoundedRectangle (b, corner, 2.2f);
-        g.setColour (tint.withAlpha (0.10f + breathe * 0.10f));
-        g.drawRoundedRectangle (b.expanded (3.0f), corner + 3.0f, 3.0f);
     }
     else
     {
@@ -245,13 +319,9 @@ void KeyPlanets::paint (juce::Graphics& g)
             ? colours::seaBright
             : colours::sea.withRotatedHue ((hue[i] - 0.5f) * 0.16f).withAlpha (available ? 0.9f : 0.25f);
 
-        if (selected || hover)
-        {
-            juce::ColourGradient glow (planetColour.withAlpha (selected ? 0.45f : 0.25f), c.x, c.y,
-                                       juce::Colours::transparentBlack, c.x + r * 2.6f, c.y, true);
-            g.setGradientFill (glow);
-            g.fillEllipse (c.x - r * 2.6f, c.y - r * 2.6f, r * 5.2f, r * 5.2f);
-        }
+        if (available)   // every live planet has a faint atmosphere; selected burns
+            ui::drawBloom (g, c, r * (selected ? 3.4f : hover ? 2.6f : 1.9f), planetColour,
+                           selected ? 0.75f : hover ? 0.45f : 0.22f);
 
         g.setGradientFill (juce::ColourGradient (planetColour.brighter (0.4f), c.x - r * 0.35f, c.y - r * 0.4f,
                                                  planetColour.darker (0.8f), c.x + r * 0.6f, c.y + r * 0.7f, true));
@@ -375,12 +445,9 @@ void StarPlayer::paint (juce::Graphics& g)
 
     auto col = empty ? colour.withSaturation (0.1f).withAlpha (0.35f) : colour;
 
-    // glow halo
+    // bloom halo (breathes while playing)
     const float haloR = juce::jmin (r * 3.2f, maxReach);
-    juce::ColourGradient halo (col.withAlpha (playing ? 0.55f : 0.28f), c.x, c.y,
-                               juce::Colours::transparentBlack, c.x + haloR, c.y, true);
-    g.setGradientFill (halo);
-    g.fillEllipse (c.x - haloR, c.y - haloR, haloR * 2.0f, haloR * 2.0f);
+    ui::drawBloom (g, c, haloR, col, playing ? 0.70f + pulse * 0.25f : 0.32f);
 
     // 4-point star rays
     juce::Path rays;
@@ -444,6 +511,10 @@ NebulaTideEditor::NebulaTideEditor (NebulaTideProcessor& p)
     : AudioProcessorEditor (p), processor (p)
 {
     setLookAndFeel (&lnf);
+#if JUCE_WINDOWS || JUCE_MAC || JUCE_LINUX
+    openGL.setContinuousRepainting (false);
+    openGL.attachTo (*this);
+#endif
     addAndMakeVisible (background);
     addAndMakeVisible (keyPlanets);
     addChildComponent (zoneKeyboard);            // hidden by default; KEYS button toggles
@@ -463,7 +534,7 @@ NebulaTideEditor::NebulaTideEditor (NebulaTideProcessor& p)
     auto styleLabel = [this] (juce::Label& l, const juce::String& text, float size, juce::Colour c)
     {
         l.setText (text, juce::dontSendNotification);
-        l.setFont (juce::Font (juce::FontOptions (size)).withExtraKerningFactor (0.25f));
+        l.setFont (size >= 14.0f ? ui::titleFont (size) : ui::labelFont (size));
         l.setColour (juce::Label::textColourId, c);
         l.setJustificationType (juce::Justification::centred);
         addAndMakeVisible (l);
@@ -600,11 +671,14 @@ NebulaTideEditor::NebulaTideEditor (NebulaTideProcessor& p)
     setResizable (true, true);
     setResizeLimits (900, 660, 1920, 1200);
     setSize (1100, 780);
-    startTimerHz (30);
+    startTimerHz (60);
 }
 
 NebulaTideEditor::~NebulaTideEditor()
 {
+#if JUCE_WINDOWS || JUCE_MAC || JUCE_LINUX
+    openGL.detach();
+#endif
     setLookAndFeel (nullptr);
 }
 
@@ -692,7 +766,9 @@ void NebulaTideEditor::updatePadStates()
             name += juce::String::fromUTF8 ("   \xc2\xb7   ") + keynames::display[processor.getCurrentKey()];
     }
     presetLabel.setText (name, juce::dontSendNotification);
-    statusLabel.setText (current >= 0 ? "transmitting" : "drifting", juce::dontSendNotification);
+    statusLabel.setText (juce::String (current >= 0 ? "transmitting" : "drifting")
+                             + (processor.usingTestLibrary ? "  [TEST LIB]" : ""),
+                         juce::dontSendNotification);
     statusLabel.setColour (juce::Label::textColourId,
                            current >= 0 ? colours::seaBright : colours::textDim);
 }
@@ -919,7 +995,7 @@ void LibraryDownloader::paint (juce::Graphics& g)
     g.drawRoundedRectangle (box, 18.0f, 1.2f);
 
     g.setColour (colours::foam);
-    g.setFont (juce::Font (juce::FontOptions (15.0f)).withExtraKerningFactor (0.25f));
+    g.setFont (ui::titleFont (15.0f));
     g.drawText ("S O U N D   L I B R A R Y", box.removeFromTop (56), juce::Justification::centred);
 
     g.setFont (juce::Font (juce::FontOptions (12.0f)));
@@ -927,7 +1003,7 @@ void LibraryDownloader::paint (juce::Graphics& g)
     juce::String msg;
     switch (state.load())
     {
-        case 0:  msg = "Nebula Tide needs its sound library (about 1 GB, one time).\nWi-Fi recommended."; break;
+        case 0:  msg = "Nebula Tide needs its sound library (about 260 MB, one time).\nWi-Fi recommended."; break;
         case 1:  msg = "Downloading...  " + juce::String ((int) (fraction.load() * 100)) + "%"; break;
         case 2:  msg = "Unpacking...  " + juce::String ((int) (fraction.load() * 100)) + "%"; break;
         default: msg = errorText; break;
@@ -960,7 +1036,7 @@ void SettingsPanel::paint (juce::Graphics& g)
     g.drawRoundedRectangle (b.reduced (0.5f), 18.0f, 1.2f);
 
     g.setColour (colours::foam);
-    g.setFont (juce::Font (juce::FontOptions (15.0f)).withExtraKerningFactor (0.25f));
+    g.setFont (ui::titleFont (15.0f));
     g.drawText ("S E T T I N G S", getLocalBounds().removeFromTop (44), juce::Justification::centred);
 
     auto info = getLocalBounds().reduced (26, 0).removeFromTop (118).withTrimmedTop (46);
@@ -980,6 +1056,9 @@ void SettingsPanel::resized()
     if (devicesBtn.isVisible())
         devicesBtn.setBounds (area.removeFromBottom (36).withSizeKeepingCentre (240, 30));
     gateBtn.setBounds (area.removeFromTop (26));
+    auto blendRow = area.removeFromTop (26);
+    blendLabel.setBounds (blendRow.removeFromLeft (96));
+    blendSlider.setBounds (blendRow.reduced (4, 2));
     area.removeFromTop (4);
 
     viewport.setBounds (area);

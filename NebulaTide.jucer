@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
 <JUCERPROJECT id="NbTd01" name="Nebula Tide" projectType="audioplug" jucerFormatVersion="1"
-              version="1.0.4" bundleIdentifier="com.nebulatide.app" companyName="NebulaTide"
+              version="1.1.0" bundleIdentifier="com.nebulatide.app" companyName="NebulaTide"
               pluginFormats="buildStandalone" pluginCharacteristicsValue="pluginIsSynth,pluginWantsMidiIn"
               pluginManufacturerCode="Nblt" pluginCode="Ntid" pluginName="Nebula Tide"
-              pluginDesc="Endless drone pads in every key" defines="NEBULA_HAS_EMBEDDED_PRESETS=0&#10;NEBULA_BETA_EXPIRY=&quot;&quot;&#10;NEBULA_VERSION=&quot;1.0.4&quot;&#10;NEBULA_MOBILE=1"
+              pluginDesc="Endless drone pads in every key" defines="NEBULA_HAS_EMBEDDED_PRESETS=0&#10;NEBULA_BETA_EXPIRY=&quot;&quot;&#10;NEBULA_VERSION=&quot;1.1.0&quot;&#10;NEBULA_MOBILE=1"
               useAppConfig="0" addUsingNamespaceToJuceHeader="0" displaySplashScreen="0"
               cppLanguageStandard="17">
   <MAINGROUP id="MainGrp" name="Nebula Tide">
@@ -33,6 +33,7 @@
     <MODULE id="juce_graphics" showAllCode="1" useLocalCopy="0" useGlobalPath="0"/>
     <MODULE id="juce_gui_basics" showAllCode="1" useLocalCopy="0" useGlobalPath="0"/>
     <MODULE id="juce_gui_extra" showAllCode="1" useLocalCopy="0" useGlobalPath="0"/>
+    <MODULE id="juce_opengl" showAllCode="1" useLocalCopy="0" useGlobalPath="0"/>
   </MODULES>
   <JUCEOPTIONS JUCE_WEB_BROWSER="0" JUCE_USE_CURL="0" JUCE_VST3_CAN_REPLACE_VST2="0"
                JUCE_USE_MP3AUDIOFORMAT="1" JUCE_USE_FLAC="1" JUCE_USE_OGGVORBIS="1"/>
@@ -62,6 +63,7 @@
         <MODULEPATH id="juce_graphics" path="build/_deps/juce-src/modules"/>
         <MODULEPATH id="juce_gui_basics" path="build/_deps/juce-src/modules"/>
         <MODULEPATH id="juce_gui_extra" path="build/_deps/juce-src/modules"/>
+        <MODULEPATH id="juce_opengl" path="build/_deps/juce-src/modules"/>
       </MODULEPATHS>
     </ANDROIDSTUDIO>
   </EXPORTFORMATS>

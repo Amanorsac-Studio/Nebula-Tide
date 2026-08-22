@@ -3,6 +3,21 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_dsp/juce_dsp.h>
 
+// ── Seamless looping ──────────────────────────────────────────────────────
+// Instead of jumping from the last sample back to the first (audible "snap"),
+// the final kLoopCrossfadeSeconds of a file are blended into its beginning
+// with an equal-power crossfade, so any loop point sounds continuous.
+// Adjustable in SETTINGS → LOOP BLEND; applies to pads, FX and textures alike.
+inline std::atomic<float> gLoopBlendSeconds { 1.5f };
+
+inline float readInterp (const float* src, int len, double pos) noexcept
+{
+    const int i0 = (int) pos;
+    const int i1 = (i0 + 1 < len) ? i0 + 1 : 0;
+    const float f = (float) (pos - i0);
+    return src[i0] + f * (src[i1] - src[i0]);
+}
+
 // One playing drone pad: a fully-loaded audio buffer looping seamlessly,
 // resampled from its native rate to the device rate with linear interpolation.
 struct PadVoice
@@ -107,10 +122,11 @@ public:
 
     // ── sound library (download on first launch for mobile / app-only installs) ──
     bool hasLibrary() const { return ! presets.isEmpty() || ! fxSounds.isEmpty() || ! texSounds.isEmpty(); }
+    bool usingTestLibrary = false;              // loaded from a presets/Stems test folder
     void reloadLibrary();                       // rescan after a download (message thread)
     static juce::File userLibraryDir();         // per-user writable presets folder
     static constexpr const char* libraryUrl =
-        "https://github.com/amanorsac/Nebula-Tide/releases/download/v1.0.0/NebulaTide-Sounds-1.0.0.zip";
+        "https://github.com/amanorsac/Nebula-Tide/releases/download/v1.0.0/NebulaTide-Sounds-1.1.0.zip";
 
     // ── preset / key control (message thread) ──
     const juce::Array<PresetGroup>& getPresets() const { return presets; }

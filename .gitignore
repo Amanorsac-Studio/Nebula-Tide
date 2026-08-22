@@ -11,3 +11,4 @@ Builds/Android/.gradle/
 Builds/Android/build/
 Builds/Android/app/build/
 build-projucer/
+presets-archive-*/

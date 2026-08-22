@@ -1,4 +1,4 @@
-NEBULA TIDE 1.0.4
+NEBULA TIDE 1.1.0
 ===============
 
 An ocean of sound, in every key. Endless drone pads — real recordings in all
@@ -7,7 +7,7 @@ Runs as a standalone app and as a VST3 plugin.
 
 WINDOWS INSTALL
 ---------------
-1. Run  NebulaTide-1.0.4-Setup.exe
+1. Run  NebulaTide-1.1.0-Setup.exe
    (If Windows SmartScreen appears, click "More info" -> "Run anyway".)
 2. Tick "Install VST3 plugin" to use it inside your DAW.
 
@@ -16,12 +16,12 @@ Installed locations:
    VST3 ....... C:\Program Files\Common Files\VST3\Nebula Tide.vst3
    Sounds ..... C:\ProgramData\Nebula Tide\presets
 
-If you downloaded the SOUND LIBRARY separately (NebulaTide-Sounds-1.0.0.zip),
+If you downloaded the SOUND LIBRARY separately (NebulaTide-Sounds-1.1.0.zip),
 unzip it so the files land in  C:\ProgramData\Nebula Tide\presets
 
 macOS INSTALL
 -------------
-Run  NebulaTide-1.0.4-macOS.pkg  — one installer for everything:
+Run  NebulaTide-1.1.0-macOS.pkg  — one installer for everything:
    App ........ /Applications/Nebula Tide.app
    VST3 ....... /Library/Audio/Plug-Ins/VST3/Nebula Tide.vst3
    AU ......... /Library/Audio/Plug-Ins/Components/Nebula Tide.component
@@ -30,7 +30,7 @@ Run  NebulaTide-1.0.4-macOS.pkg  — one installer for everything:
 the .pkg -> Open -> Open.)
 
 ANDROID: install NebulaTide-Android*.apk (sideload) or via Google Play. On first
-launch the app downloads its sound library (about 1 GB, Wi-Fi recommended).
+launch the app downloads its sound library (about 260 MB).
 
 iPad: available through the App Store / TestFlight only (Apple does not allow
 installing iPad apps from a download).

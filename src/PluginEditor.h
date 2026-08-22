@@ -1,5 +1,20 @@
 #pragma once
 #include "PluginProcessor.h"
+#include <juce_opengl/juce_opengl.h>
+
+//==============================================================================
+// HD rendering helpers: true Gaussian bloom (cached sprite, cheap to draw) and
+// per-platform premium fonts (no bundled files needed).
+namespace ui
+{
+    // soft light bloom centred at c with the given radius, colour and strength
+    void drawBloom (juce::Graphics& g, juce::Point<float> c, float radius,
+                    juce::Colour colour, float intensity = 1.0f);
+
+    juce::Font titleFont (float size);      // wide-tracked display face
+    juce::Font labelFont (float size);      // small caps labels
+    juce::Font bodyFont  (float size);
+}
 
 //==============================================================================
 // "Falling through space": stars fly past the viewer with z-depth projection,
@@ -12,13 +27,13 @@ public:
         setInterceptsMouseClicks (false, false);
         for (auto& s : stars)
             respawn (s, true);
-        startTimerHz (30);
+        startTimerHz (60);
     }
 
     void paint (juce::Graphics& g) override;
 
 private:
-    struct Star { float x, y, z, size; };   // x,y in [-1,1] around centre, z depth
+    struct Star { float x, y, z, size, warmth; };   // x,y in [-1,1] around centre, z depth
 
     void respawn (Star& s, bool anywhere)
     {
@@ -26,6 +41,7 @@ private:
         s.y = rnd.nextFloat() * 2.0f - 1.0f;
         s.z = anywhere ? (0.15f + rnd.nextFloat() * 0.85f) : 1.0f;
         s.size = 0.6f + rnd.nextFloat() * 1.6f;
+        s.warmth = rnd.nextFloat();            // colour temperature + twinkle phase
     }
 
     void timerCallback() override
@@ -87,7 +103,7 @@ public:
             wobblePhase[i] = rnd.nextFloat() * juce::MathConstants<float>::twoPi;
             hue[i] = rnd.nextFloat();
         }
-        startTimerHz (30);
+        startTimerHz (60);
     }
 
     void paint (juce::Graphics& g) override;
@@ -139,7 +155,7 @@ public:
         {
             processor.setAuxLoop (cat, ! processor.getAuxLoop (cat));
         };
-        startTimerHz (30);
+        startTimerHz (60);
     }
 
     ~StarPlayer() override
@@ -185,7 +201,7 @@ private:
 class ZoneKeyboard : public juce::Component, private juce::Timer
 {
 public:
-    explicit ZoneKeyboard (NebulaTideProcessor& p) : processor (p) { startTimerHz (30); }
+    explicit ZoneKeyboard (NebulaTideProcessor& p) : processor (p) { startTimerHz (60); }
     void paint (juce::Graphics&) override;
     void mouseDown (const juce::MouseEvent&) override;
     void mouseUp (const juce::MouseEvent&) override;
@@ -301,11 +317,24 @@ public:
         gateBtn.setToggleState (processor.noteGate.load(), juce::dontSendNotification);
         gateBtn.onClick = [this] { processor.noteGate.store (gateBtn.getToggleState()); };
         addAndMakeVisible (gateBtn);
+
+        blendLabel.setText ("LOOP BLEND", juce::dontSendNotification);
+        blendLabel.setFont (juce::Font (juce::FontOptions (10.0f)).withExtraKerningFactor (0.3f));
+        addAndMakeVisible (blendLabel);
+        blendSlider.setSliderStyle (juce::Slider::LinearHorizontal);
+        blendSlider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 52, 20);
+        blendSlider.setRange (0.1, 6.0, 0.1);
+        blendSlider.setTextValueSuffix (" s");
+        blendSlider.setValue (gLoopBlendSeconds.load(), juce::dontSendNotification);
+        blendSlider.onValueChange = [this] { gLoopBlendSeconds.store ((float) blendSlider.getValue()); };
+        addAndMakeVisible (blendSlider);
         startTimerHz (10);
     }
 
     juce::TextButton devicesBtn;   // wired by the editor (standalone only)
     juce::ToggleButton gateBtn { "MIDI notes gate the pad (note off = fade out, like a sampler)" };
+    juce::Label blendLabel;        // loop crossfade length (pads, FX, textures)
+    juce::Slider blendSlider;
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -367,6 +396,10 @@ private:
     std::unique_ptr<Attachment> volumeAtt, panAtt, fadeAtt, rMixAtt, rSizeAtt, rDampAtt;
 
     juce::OwnedArray<MidiLearnListener> learnListeners;
+
+#if JUCE_WINDOWS || JUCE_MAC || JUCE_LINUX
+    juce::OpenGLContext openGL;   // GPU-accelerated rendering on desktop
+#endif
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (NebulaTideEditor)
 };
