@@ -30,10 +30,16 @@ jobs:
           SOUNDS_URL: ${{ endsWith(vars.SOUNDS_URL, '.zip') && vars.SOUNDS_URL || 'https://github.com/amanorsac/Nebula-Tide/releases/download/v1.0.0/NebulaTide-Sounds-1.1.0.zip' }}
         run: |
           "Downloading $env:SOUNDS_URL"
-          curl.exe -L --fail --retry 3 -o sounds.zip "$env:SOUNDS_URL"
+          # GitHub's CDN occasionally resets large downloads: retry on any error, up to 8 times
+          $ok = $false
+          foreach ($attempt in 1..8) {
+            curl.exe -L --fail --retry 3 --retry-all-errors --retry-delay 5 -o sounds.zip "$env:SOUNDS_URL"
+            if ($LASTEXITCODE -eq 0 -and (Test-Path sounds.zip) -and (Get-Item sounds.zip).Length -gt 100MB) { $ok = $true; break }
+            "attempt $attempt failed (exit $LASTEXITCODE) — retrying"; Remove-Item sounds.zip -ErrorAction SilentlyContinue; Start-Sleep 10
+          }
+          if (-not $ok) { throw "could not download the sound library from $env:SOUNDS_URL" }
           $mb = [math]::Round((Get-Item sounds.zip).Length / 1MB, 1)
           "Downloaded $mb MB"
-          if ($mb -lt 1) { throw "sounds.zip is too small — SOUNDS_URL must be a direct link to the .zip file" }
           Expand-Archive sounds.zip -DestinationPath presets
           "Sound library: $((Get-ChildItem presets -Recurse -File).Count) files"
 
@@ -104,7 +110,14 @@ jobs:
           SOUNDS_URL: ${{ endsWith(vars.SOUNDS_URL, '.zip') && vars.SOUNDS_URL || 'https://github.com/amanorsac/Nebula-Tide/releases/download/v1.0.0/NebulaTide-Sounds-1.1.0.zip' }}
         run: |
           echo "Downloading $SOUNDS_URL"
-          curl -L --fail --retry 3 -o sounds.zip "$SOUNDS_URL"
+          # GitHub's CDN occasionally resets large downloads: retry on any error, up to 8 times
+          ok=0
+          for attempt in 1 2 3 4 5 6 7 8; do
+            if curl -L --fail --retry 3 --retry-all-errors --retry-delay 5 -o sounds.zip "$SOUNDS_URL" \
+               && [ "$(stat -f%z sounds.zip 2>/dev/null || stat -c%s sounds.zip)" -gt 100000000 ]; then ok=1; break; fi
+            echo "attempt $attempt failed — retrying"; rm -f sounds.zip; sleep 10
+          done
+          [ "$ok" = 1 ] || { echo "::error::could not download the sound library"; exit 1; }
           ls -la sounds.zip
           # unzip exits 1 on mere warnings (e.g. Windows-made zips using
           # backslash paths) — extract anyway, then verify we got files
