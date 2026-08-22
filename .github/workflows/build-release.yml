@@ -45,8 +45,12 @@ jobs:
           if (-not $ok) { throw "could not download the sound library (check the SOUNDS_URL repo variable)" }
           $mb = [math]::Round((Get-Item sounds.zip).Length / 1MB, 1)
           "Downloaded $mb MB"
-          Expand-Archive sounds.zip -DestinationPath presets
-          "Sound library: $((Get-ChildItem presets -Recurse -File).Count) files"
+          # bsdtar reads every zip flavour (Expand-Archive chokes on some)
+          New-Item -ItemType Directory -Force presets | Out-Null
+          tar.exe -xf sounds.zip -C presets
+          $n = (Get-ChildItem presets -Recurse -File).Count
+          "Sound library: $n files"
+          if ($n -lt 1) { throw "no files extracted from sounds.zip" }
 
       - name: Install Inno Setup
         run: choco install innosetup --no-progress -y
@@ -129,9 +133,8 @@ jobs:
           done
           [ "$ok" = 1 ] || { echo "::error::could not download the sound library (check the SOUNDS_URL repo variable)"; exit 1; }
           ls -la sounds.zip
-          # unzip exits 1 on mere warnings (e.g. Windows-made zips using
-          # backslash paths) — extract anyway, then verify we got files
-          mkdir -p presets && (unzip -q sounds.zip -d presets || true)
+          # bsdtar reads every zip flavour (unzip rejects some); then verify we got files
+          mkdir -p presets && tar -xf sounds.zip -C presets
           # repair entries whose names still contain backslashes → real subfolders
           find presets -depth -name '*\\*' | while IFS= read -r f; do
             n="${f//\\//}"; mkdir -p "$(dirname "$n")"; mv "$f" "$n"; done
