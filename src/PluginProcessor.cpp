@@ -181,6 +181,12 @@ static juce::File findPresetsDir()
     }
 
     for (auto candidate : {
+        // macOS: the installer writes /Library/Application Support/Nebula Tide/presets
+        // (JUCE's commonApplicationDataDirectory is /Library on Mac, so add both)
+        juce::File::getSpecialLocation (juce::File::commonApplicationDataDirectory)
+            .getChildFile ("Application Support").getChildFile ("Nebula Tide").getChildFile ("presets"),
+        juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
+            .getChildFile ("Application Support").getChildFile ("Nebula Tide").getChildFile ("presets"),
         juce::File::getSpecialLocation (juce::File::commonApplicationDataDirectory)
             .getChildFile ("Nebula Tide").getChildFile ("presets"),           // ProgramData / Library
         juce::File::getSpecialLocation (juce::File::globalApplicationsDirectory)
@@ -194,8 +200,14 @@ static juce::File findPresetsDir()
 
 juce::File NebulaTideProcessor::userLibraryDir()
 {
+   #if JUCE_MAC
+    // ~/Library/Application Support/Nebula Tide/presets (Mac convention)
+    return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
+               .getChildFile ("Application Support").getChildFile ("Nebula Tide").getChildFile ("presets");
+   #else
     return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
                .getChildFile ("Nebula Tide").getChildFile ("presets");
+   #endif
 }
 
 void NebulaTideProcessor::reloadLibrary()

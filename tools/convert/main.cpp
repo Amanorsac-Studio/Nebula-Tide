@@ -5,6 +5,18 @@
 
 int main (int argc, char* argv[])
 {
+    // --ziptest <zip>: verify the in-app downloader (juce::ZipFile) can read a
+    // sound-library archive and list how many audio entries it sees.
+    if (argc == 3 && juce::String (argv[1]) == "--ziptest")
+    {
+        juce::ZipFile zip (juce::File (juce::String::fromUTF8 (argv[2])));
+        int audio = 0;
+        for (int i = 0; i < zip.getNumEntries(); ++i)
+            if (zip.getEntry (i)->filename.endsWithIgnoreCase (".flac")) ++audio;
+        std::cout << "entries=" << zip.getNumEntries() << " audio=" << audio << "\n";
+        return audio > 0 ? 0 : 1;
+    }
+
     if (argc < 3)
     {
         std::cerr << "usage: NebulaConvert <input> <output.flac> [-n16]\n";

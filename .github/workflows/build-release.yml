@@ -82,8 +82,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Configure
-        run: cmake -S . -B build-mac -G Xcode
+      - name: Configure (universal Intel + Apple Silicon, macOS 10.13+)
+        run: >
+          cmake -S . -B build-mac -G Xcode
+          -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+          -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13
 
       - name: Build (Standalone + VST3 + AU)
         run: cmake --build build-mac --config Release --target NebulaTide_Standalone NebulaTide_VST3 NebulaTide_AU
