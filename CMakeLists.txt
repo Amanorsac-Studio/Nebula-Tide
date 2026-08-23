@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(NebulaTide VERSION 1.1.4)
+project(NebulaTide VERSION 1.1.5)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -62,6 +62,22 @@ if(NEBULA_EMBED_PRESETS AND PRESET_FILES)
     target_compile_definitions(NebulaTide PRIVATE NEBULA_HAS_EMBEDDED_PRESETS=1)
 else()
     target_compile_definitions(NebulaTide PRIVATE NEBULA_HAS_EMBEDDED_PRESETS=0)
+endif()
+
+# iOS: the sound library ships inside the app bundle (presets/ copied in as
+# resources, keeping fx/ and textures/ subfolders). Nothing is downloaded later.
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS" AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/presets")
+    file(GLOB_RECURSE NEBULA_SOUND_FILES RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}/presets"
+         "${CMAKE_CURRENT_SOURCE_DIR}/presets/*")
+    foreach(rel ${NEBULA_SOUND_FILES})
+        get_filename_component(subdir "${rel}" DIRECTORY)
+        set(abs "${CMAKE_CURRENT_SOURCE_DIR}/presets/${rel}")
+        target_sources(NebulaTide_Standalone PRIVATE "${abs}")
+        set_source_files_properties("${abs}" PROPERTIES
+            MACOSX_PACKAGE_LOCATION "presets/${subdir}" HEADER_FILE_ONLY TRUE)
+    endforeach()
+    list(LENGTH NEBULA_SOUND_FILES NEBULA_SOUND_COUNT)
+    message(STATUS "iOS: bundling ${NEBULA_SOUND_COUNT} sound files into the app")
 endif()
 
 # Beta builds expire: set NEBULA_BETA_EXPIRY to "YYYY-MM-DD" (empty = never)

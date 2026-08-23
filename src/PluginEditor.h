@@ -252,34 +252,25 @@ private:
 };
 
 //==============================================================================
-// First-launch sound library downloader. Shown when no presets are found
-// (mobile builds, app-only installs). Downloads the library zip, unpacks it
-// into the per-user presets folder, then rescans.
-class LibraryDownloader : public juce::Component,
-                          private juce::URL::DownloadTaskListener,
-                          private juce::Timer
+// Shown when no sound library is found. On Android it installs the library
+// that ships inside the APK (first launch, with progress). Elsewhere it simply
+// explains that the install is incomplete — nothing is ever downloaded.
+class LibraryDownloader : public juce::Component, private juce::Timer
 {
 public:
     LibraryDownloader (NebulaTideProcessor& p, std::function<void()> onReady);
     ~LibraryDownloader() override;
     void paint (juce::Graphics&) override;
-    void resized() override;
+    void resized() override {}
 
 private:
-    void start();
-    void progress (juce::URL::DownloadTask*, juce::int64 downloaded, juce::int64 total) override;
-    void finished (juce::URL::DownloadTask*, bool success) override;
     void timerCallback() override { repaint(); }
-    void unpackAndFinish();
 
     NebulaTideProcessor& processor;
     std::function<void()> onReady;
-    juce::TextButton downloadBtn { "DOWNLOAD SOUND LIBRARY" };
-    std::unique_ptr<juce::URL::DownloadTask> task;
-    juce::File zipFile;
     std::atomic<double> fraction { 0.0 };
-    std::atomic<int> state { 0 };    // 0 idle, 1 downloading, 2 unpacking, 3 error
-    juce::String errorText;
+    std::atomic<int> state { 0 };    // 2 installing, 3 message only
+    juce::String messageText;
     juce::ThreadPool pool { 1 };
 };
 

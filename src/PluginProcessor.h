@@ -123,10 +123,13 @@ public:
     // ── sound library (download on first launch for mobile / app-only installs) ──
     bool hasLibrary() const { return ! presets.isEmpty() || ! fxSounds.isEmpty() || ! texSounds.isEmpty(); }
     bool usingTestLibrary = false;              // loaded from a presets/Stems test folder
-    void reloadLibrary();                       // rescan after a download (message thread)
+    void reloadLibrary();                       // rescan after installing (message thread)
     static juce::File userLibraryDir();         // per-user writable presets folder
-    static constexpr const char* libraryUrl =
-        "https://github.com/amanorsac/Nebula-Tide/releases/download/v1.0.0/NebulaTide-Sounds-1.1.0.zip";
+
+    // Sounds always ship INSIDE the app — nothing is ever downloaded after install.
+    // Android: the library is packed into the APK's assets and copied out into
+    // userLibraryDir() on first launch (background thread; progress 0..1).
+    bool installBundledLibrary (std::function<void (double)> progress);
 
     // ── preset / key control (message thread) ──
     const juce::Array<PresetGroup>& getPresets() const { return presets; }

@@ -172,6 +172,12 @@ static juce::File preferTestLibrary (juce::File dir)
 
 static juce::File findPresetsDir()
 {
+    // sounds bundled inside the app itself (iOS app root / macOS .app Resources)
+    const auto app = juce::File::getSpecialLocation (juce::File::currentApplicationFile);
+    for (auto c : { app.getChildFile ("presets"),
+                    app.getChildFile ("Contents").getChildFile ("Resources").getChildFile ("presets") })
+        if (c.isDirectory()) return preferTestLibrary (c);
+
     auto dir = juce::File::getSpecialLocation (juce::File::currentExecutableFile).getParentDirectory();
     for (int up = 0; up < 6 && dir.exists(); ++up)
     {
@@ -215,6 +221,72 @@ void NebulaTideProcessor::reloadLibrary()
     stopAll();
     scanPresets();          // clears and rescans pads, fx, textures, manifest
 }
+
+#if JUCE_ANDROID
+ #include <android/asset_manager.h>
+ #include <android/asset_manager_jni.h>
+
+// Copies presets/, presets/fx, presets/textures out of the APK assets into the
+// per-user library folder. Runs on a background thread.
+bool NebulaTideProcessor::installBundledLibrary (std::function<void (double)> progress)
+{
+    auto* env = juce::getEnv();
+    auto context = juce::getAppContext();
+    if (env == nullptr || context.get() == nullptr) return false;
+
+    jclass ctxClass = env->GetObjectClass (context.get());
+    jmethodID getAssets = env->GetMethodID (ctxClass, "getAssets", "()Landroid/content/res/AssetManager;");
+    jobject assetMgrObj = env->CallObjectMethod (context.get(), getAssets);
+    AAssetManager* mgr = AAssetManager_fromJava (env, assetMgrObj);
+    if (mgr == nullptr) return false;
+
+    const juce::File dest = userLibraryDir();
+    dest.createDirectory();
+    const char* dirs[] = { "presets", "presets/fx", "presets/textures" };
+
+    int total = 0;
+    for (auto* d : dirs)
+        if (AAssetDir* ad = AAssetManager_openDir (mgr, d))
+        {
+            while (AAssetDir_getNextFileName (ad) != nullptr) ++total;
+            AAssetDir_close (ad);
+        }
+
+    int done = 0;
+    std::vector<char> buf (1 << 16);
+    for (auto* d : dirs)
+    {
+        AAssetDir* ad = AAssetManager_openDir (mgr, d);
+        if (ad == nullptr) continue;
+        const juce::String sub = juce::String (d).fromFirstOccurrenceOf ("presets", false, false).trimCharactersAtStart ("/");
+        while (const char* name = AAssetDir_getNextFileName (ad))
+        {
+            const juce::String assetPath = juce::String (d) + "/" + name;
+            if (AAsset* a = AAssetManager_open (mgr, assetPath.toRawUTF8(), AASSET_MODE_STREAMING))
+            {
+                auto target = (sub.isEmpty() ? dest : dest.getChildFile (sub)).getChildFile (name);
+                target.getParentDirectory().createDirectory();
+                target.deleteFile();
+                juce::FileOutputStream out (target);
+                if (out.openedOk())
+                {
+                    int n;
+                    while ((n = AAsset_read (a, buf.data(), buf.size())) > 0)
+                        out.write (buf.data(), (size_t) n);
+                }
+                AAsset_close (a);
+            }
+            ++done;
+            if (progress) progress (total > 0 ? (double) done / (double) total : 1.0);
+        }
+        AAssetDir_close (ad);
+    }
+    env->DeleteLocalRef (assetMgrObj);
+    return done > 0;
+}
+#else
+bool NebulaTideProcessor::installBundledLibrary (std::function<void (double)>) { return false; }
+#endif
 
 //==============================================================================
 NebulaTideProcessor::NebulaTideProcessor()
