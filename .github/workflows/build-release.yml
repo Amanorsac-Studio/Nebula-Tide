@@ -248,8 +248,8 @@ jobs:
             [ "$ok" = 1 ] && break
           done
           [ "$ok" = 1 ] || { echo "::error::could not download the sound library"; exit 1; }
-          A=Builds/Android/app/src/main/assets/presets
-          mkdir -p "$A" && (cd "$A" && unzip -q ../../../../../../sounds.zip || true)
+          A="$GITHUB_WORKSPACE/Builds/Android/app/src/main/assets/presets"
+          mkdir -p "$A" && tar -xf "$GITHUB_WORKSPACE/sounds.zip" -C "$A"
           rm -rf "$A/Stems"
           echo "APK assets: $(find "$A" -type f | wc -l) files"
           [ "$(find "$A" -type f | wc -l)" -gt 0 ] || { echo "::error::no sound files extracted"; exit 1; }
