@@ -519,6 +519,14 @@ NebulaTideEditor::NebulaTideEditor (NebulaTideProcessor& p)
     addAndMakeVisible (keyPlanets);
     addChildComponent (zoneKeyboard);            // hidden by default; KEYS button toggles
     zoneKeyboard.setVisible (processor.showKeyboard.load());
+    updateBtn.setColour (juce::TextButton::textColourOffId, colours::seaBright);
+    updateBtn.onClick = [this]
+    {
+        if (updatePageUrl.isNotEmpty()) juce::URL (updatePageUrl).launchInDefaultBrowser();
+    };
+    addChildComponent (updateBtn);
+    checkForUpdate();
+
     keysBtn.setColour (juce::TextButton::textColourOffId, colours::textDim);
     keysBtn.onClick = [this]
     {
@@ -1053,6 +1061,50 @@ static bool betaExpired()
     return juce::Time::getCurrentTime() > exp;
 }
 
+// Fetches the small version file from the website in the background. Any
+// failure (offline, DNS, 404) is silent — the app never depends on it.
+void NebulaTideEditor::checkForUpdate()
+{
+    juce::Component::SafePointer<NebulaTideEditor> safe (this);
+    updatePool.addJob ([safe]
+    {
+        const juce::URL url (NebulaTideProcessor::updateUrl);
+        const auto text = url.readEntireTextStream (false);
+        if (text.isEmpty()) return;
+
+        const auto json = juce::JSON::parse (text);
+        const auto latest = json.getProperty ("version", "").toString().trim();
+        const auto page   = json.getProperty ("page", "").toString().trim();
+        if (latest.isEmpty()) return;
+
+        // numeric compare: 1.10.0 is newer than 1.9.0
+        auto parts = [] (const juce::String& v)
+        {
+            juce::Array<int> a;
+            for (auto& s : juce::StringArray::fromTokens (v, ".", "")) a.add (s.getIntValue());
+            while (a.size() < 3) a.add (0);
+            return a;
+        };
+        const auto mine = parts (NEBULA_VERSION), theirs = parts (latest);
+        bool newer = false;
+        for (int i = 0; i < 3; ++i)
+        {
+            if (theirs[i] > mine[i]) { newer = true; break; }
+            if (theirs[i] < mine[i]) break;
+        }
+        if (! newer) return;
+
+        juce::MessageManager::callAsync ([safe, latest, page]
+        {
+            if (safe == nullptr) return;
+            safe->updatePageUrl = page;
+            safe->updateBtn.setButtonText ("UPDATE " + latest);
+            safe->updateBtn.setVisible (true);
+            safe->resized();
+        });
+    });
+}
+
 bool NebulaTideEditor::keyPressed (const juce::KeyPress& k)
 {
     if (betaExpired()) return false;
@@ -1149,6 +1201,11 @@ void NebulaTideEditor::resized()
     settingsBtn.setBounds (header.removeFromRight (86));
     header.removeFromRight (6);
     keysBtn.setBounds (header.removeFromRight (62));
+    if (updateBtn.isVisible())
+    {
+        header.removeFromRight (6);
+        updateBtn.setBounds (header.removeFromRight (130));
+    }
     statusLabel.setBounds (header.removeFromRight (130));
 
     settingsPanel.setBounds (getLocalBounds().withSizeKeepingCentre (

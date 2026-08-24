@@ -40,13 +40,14 @@ Source: "{#BuildDir}\Standalone\Nebula Tide.exe"; DestDir: "{app}"; Flags: ignor
 Source: "..\NebulaTide.ntlib"; DestDir: "{commonappdata}\Nebula Tide"; Flags: ignoreversion
 #endif
 
+; VST3 into the system VST3 folder
+Source: "{#BuildDir}\VST3\Nebula Tide.vst3\*"; DestDir: "{commoncf64}\VST3\Nebula Tide.vst3"; Flags: ignoreversion recursesubdirs createallsubdirs; Tasks: vst3
+
 [InstallDelete]
-; remove the old unencrypted sound folder left by versions up to 1.1.7
+; remove the old unencrypted sound folders left by versions up to 1.1.7
 Type: filesandordirs; Name: "{commonappdata}\Nebula Tide\presets"
 Type: filesandordirs; Name: "{app}\presets"
 Type: filesandordirs; Name: "{commoncf64}\VST3\presets"
-; VST3 into the system VST3 folder
-Source: "{#BuildDir}\VST3\Nebula Tide.vst3\*"; DestDir: "{commoncf64}\VST3\Nebula Tide.vst3"; Flags: ignoreversion recursesubdirs createallsubdirs; Tasks: vst3
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\Nebula Tide.exe"

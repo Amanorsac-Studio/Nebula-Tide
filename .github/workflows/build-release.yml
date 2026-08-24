@@ -173,6 +173,13 @@ jobs:
           cp -R "$R/AU/Nebula Tide.component" "pkgroot/Library/Audio/Plug-Ins/Components/"
           cp NebulaTide.ntlib "pkgroot/Library/Application Support/Nebula Tide/"
 
+          # belt-and-braces for the plugin: a link to the library INSIDE each
+          # bundle, so the VST3/AU find it regardless of DAW sandboxing
+          ln -s "/Library/Application Support/Nebula Tide/NebulaTide.ntlib" \
+                "pkgroot/Library/Audio/Plug-Ins/VST3/Nebula Tide.vst3/Contents/Resources/NebulaTide.ntlib" || true
+          ln -s "/Library/Application Support/Nebula Tide/NebulaTide.ntlib" \
+                "pkgroot/Library/Audio/Plug-Ins/Components/Nebula Tide.component/Contents/Resources/NebulaTide.ntlib" || true
+
           # remove the old unencrypted folder left by versions up to 1.1.7
           mkdir -p scripts
           cat > scripts/postinstall <<'SH'
@@ -256,6 +263,7 @@ jobs:
   # debug-signed APK that can be sideloaded for testing.
   android:
     runs-on: ubuntu-latest
+    continue-on-error: true      # parked for now — must never block Windows/Mac releases
     steps:
       - uses: actions/checkout@v4
 
@@ -295,6 +303,15 @@ jobs:
           A="$GITHUB_WORKSPACE/Builds/Android/app/src/main/assets"
           mkdir -p "$A" && cp NebulaTide.ntlib "$A/"
           ls -la "$A"
+
+          # The container is already compressed audio — tell the packager to store
+          # it as-is (compressing 255 MB in-memory blows Gradle's heap), and give
+          # Gradle room to work.
+          G=Builds/Android/app/build.gradle
+          grep -q 'noCompress' "$G" || \
+            perl -0pi -e 's/(\nandroid \{)/$1\n    androidResources { noCompress += ["ntlib"] }/' "$G"
+          grep -n "noCompress" "$G"
+          printf '\norg.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1g\n' >> Builds/Android/gradle.properties
 
       - name: Build APK
         env:
@@ -352,7 +369,7 @@ jobs:
   # have permanent download links for the website.
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [windows, macos, android]
+    needs: [windows, macos]      # android is parked; its APK attaches only when it succeeds
     runs-on: ubuntu-latest
     permissions:
       contents: write

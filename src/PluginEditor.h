@@ -371,6 +371,11 @@ private:
 
     juce::Label title, presetLabel, statusLabel;
     juce::TextButton prevBtn { "<" }, nextBtn { ">" };
+    juce::TextButton updateBtn { "UPDATE AVAILABLE" };   // hidden unless one exists
+    juce::String updatePageUrl;
+    juce::ThreadPool updatePool { 1 };
+    void checkForUpdate();
+
     juce::TextButton settingsBtn { "SETTINGS" };
     juce::TextButton keysBtn { "KEYS" };       // show/hide the zoned keyboard strip
     SettingsPanel settingsPanel { processor };

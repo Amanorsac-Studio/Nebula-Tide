@@ -136,6 +136,10 @@ public:
     bool installBundledLooseFiles (std::function<void (double)> progress);
     static juce::String librarySearchReport();   // diagnostics for the "not found" panel
 
+    // Version notice only — a few hundred bytes, once per launch, never any
+    // content. No connection = no check; the app is fully functional offline.
+    static constexpr const char* updateUrl = "https://amanorsac.studio/nebulatide/latest.json";
+
     // ── preset / key control (message thread) ──
     const juce::Array<PresetGroup>& getPresets() const { return presets; }
     int  getCurrentPadIndex() const { return currentPad.load(); }
