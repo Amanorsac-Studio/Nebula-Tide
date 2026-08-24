@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(NebulaTide VERSION 1.2.2)
+project(NebulaTide VERSION 1.3.0)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -37,6 +37,14 @@ juce_add_plugin(NebulaTide
     NEEDS_MIDI_INPUT TRUE
     NEEDS_MIDI_OUTPUT FALSE
     COPY_PLUGIN_AFTER_BUILD FALSE
+    # ── iPhone + iPad ──
+    TARGETED_DEVICE_FAMILY "1,2"           # universal
+    IPAD_SCREEN_ORIENTATIONS   UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
+    IPHONE_SCREEN_ORIENTATIONS UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
+    REQUIRES_FULL_SCREEN TRUE
+    STATUS_BAR_HIDDEN TRUE
+    BACKGROUND_AUDIO_ENABLED TRUE          # pads keep playing when the app is backgrounded
+    PLIST_TO_MERGE "${CMAKE_CURRENT_SOURCE_DIR}/ios/Info-extra.plist"
 )
 
 target_sources(NebulaTide PRIVATE
@@ -64,13 +72,18 @@ else()
     target_compile_definitions(NebulaTide PRIVATE NEBULA_HAS_EMBEDDED_PRESETS=0)
 endif()
 
-# iOS: the encrypted sound container ships inside the app bundle. Build it first
-# with NebulaPack (CI does this), then configure. Nothing is downloaded later.
+# iOS: the encrypted sound container ships inside the app bundle (and inside the
+# AUv3 extension, so the plugin works in GarageBand/Logic too). Build it first
+# with NebulaPack --ogg (CI does this). Nothing is downloaded after install.
 if(CMAKE_SYSTEM_NAME STREQUAL "iOS" AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/NebulaTide.ntlib")
-    target_sources(NebulaTide_Standalone PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/NebulaTide.ntlib")
     set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/NebulaTide.ntlib" PROPERTIES
         MACOSX_PACKAGE_LOCATION "Resources" HEADER_FILE_ONLY TRUE)
-    message(STATUS "iOS: bundling encrypted sound container into the app")
+    foreach(tgt NebulaTide_Standalone NebulaTide_AUv3)
+        if(TARGET ${tgt})
+            target_sources(${tgt} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/NebulaTide.ntlib")
+        endif()
+    endforeach()
+    message(STATUS "iOS: bundling encrypted sound container into app + AUv3")
 endif()
 
 # Beta builds expire: set NEBULA_BETA_EXPIRY to "YYYY-MM-DD" (empty = never)
@@ -112,9 +125,13 @@ target_link_libraries(NebulaConvert PRIVATE
 # ── NebulaPack: builds the encrypted .ntlib sound container ──
 juce_add_console_app(NebulaPack PRODUCT_NAME "NebulaPack")
 target_sources(NebulaPack PRIVATE tools/pack/main.cpp)
-target_compile_definitions(NebulaPack PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+target_compile_definitions(NebulaPack PRIVATE
+    JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0
+    JUCE_USE_FLAC=1 JUCE_USE_OGGVORBIS=1
+)
 target_link_libraries(NebulaPack PRIVATE
     juce::juce_cryptography
+    juce::juce_audio_formats
     juce::juce_events
     juce::juce_core
 )

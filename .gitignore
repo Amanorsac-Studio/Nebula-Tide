@@ -13,3 +13,5 @@ Builds/Android/app/build/
 build-projucer/
 presets-archive-*/
 NebulaTide.ntlib
+installer/output/mobile-q*.ntlib
+installer/*.zip

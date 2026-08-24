@@ -45,7 +45,7 @@ namespace ProjectInfo
 {
     const char* const  projectName    = "Nebula Tide";
     const char* const  companyName    = "NebulaTide";
-    const char* const  versionString  = "1.1.7";
-    const int          versionNumber  = 0x10107;
+    const char* const  versionString  = "1.2.2";
+    const int          versionNumber  = 0x10202;
 }
 #endif

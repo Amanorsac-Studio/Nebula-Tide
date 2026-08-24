@@ -85,6 +85,8 @@ jobs:
   macos:
     if: ${{ !startsWith(github.ref, 'refs/heads/ci-') }}
     runs-on: macos-14
+    env:
+      HAS_MAC_SIGNING: ${{ secrets.MAC_CERT_P12 != '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -101,7 +103,7 @@ jobs:
       # Repo secrets: MAC_CERT_P12 (base64), MAC_CERT_PASSWORD, APPLE_ID,
       # APPLE_TEAM_ID, APPLE_APP_PASSWORD
       - name: Sign & notarize
-        if: ${{ env.MAC_CERT_P12 != '' }}
+        if: env.HAS_MAC_SIGNING == 'true'
         env:
           MAC_CERT_P12: ${{ secrets.MAC_CERT_P12 }}
           MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
@@ -213,6 +215,9 @@ jobs:
   ios:
     if: ${{ !startsWith(github.ref, 'refs/heads/ci-') }}
     runs-on: macos-14
+    env:
+      # step-level `if` can read job env but not secrets directly
+      HAS_IOS_SIGNING: ${{ secrets.IOS_DIST_CERT_P12 != '' && secrets.ASC_KEY_P8 != '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -234,26 +239,82 @@ jobs:
           mkdir -p presets && tar -xf sounds.zip -C presets
           echo "Sound library: $(find presets -type f | wc -l) files"
 
-      - name: Pack the encrypted container
+      # Mobile uses an Ogg-compressed container so the download stays small
+      - name: Pack the encrypted container (mobile)
         run: |
           cmake -S . -B build-pack -G Xcode
           cmake --build build-pack --config Release --target NebulaPack
           PACK=$(find build-pack -name NebulaPack -type f -perm +111 | head -1)
-          "$PACK" presets NebulaTide.ntlib
+          "$PACK" presets NebulaTide.ntlib --ogg 7
           "$PACK" --verify NebulaTide.ntlib
+          ls -lh NebulaTide.ntlib
 
       - name: Configure (iOS)
-        run: cmake -S . -B build-ios -G Xcode -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0
+        run: >
+          cmake -S . -B build-ios -G Xcode
+          -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0
+          -DCMAKE_XCODE_GENERATE_SCHEME=ON
+          -DCMAKE_XCODE_ATTRIBUTE_DEVELOPMENT_TEAM=${{ secrets.APPLE_TEAM_ID }}
 
-      # Unsigned device build proves the iOS code compiles; TestFlight signing
-      # and upload use your existing per-app process.
+      # Unsigned build always runs: it proves the iOS/iPadOS code compiles.
       - name: Build (unsigned)
         run: cmake --build build-ios --config Release --target NebulaTide_Standalone -- CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
 
+      # Signed App Store build + TestFlight upload, when the Apple secrets exist.
+      # Needs: IOS_DIST_CERT_P12 (base64), IOS_CERT_PASSWORD, IOS_PROVISION_PROFILE
+      # (base64 .mobileprovision), APPLE_TEAM_ID, ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8 (base64)
+      - name: Archive & upload to TestFlight
+        if: env.HAS_IOS_SIGNING == 'true'
+        env:
+          IOS_DIST_CERT_P12: ${{ secrets.IOS_DIST_CERT_P12 }}
+          IOS_CERT_PASSWORD: ${{ secrets.IOS_CERT_PASSWORD }}
+          IOS_PROVISION_PROFILE: ${{ secrets.IOS_PROVISION_PROFILE }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          # signing identity into a temporary keychain
+          echo "$IOS_DIST_CERT_P12" | base64 -d > dist.p12
+          security create-keychain -p ci ios.keychain
+          security default-keychain -s ios.keychain
+          security unlock-keychain -p ci ios.keychain
+          security import dist.p12 -k ios.keychain -P "$IOS_CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k ci ios.keychain
+
+          # provisioning profile
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          echo "$IOS_PROVISION_PROFILE" | base64 -d > ~/Library/MobileDevice/Provisioning\ Profiles/nebula.mobileprovision
+
+          xcodebuild -list -project build-ios/NebulaTide.xcodeproj || true
+          xcodebuild -project build-ios/NebulaTide.xcodeproj \
+                     -scheme NebulaTide_Standalone -configuration Release \
+                     -destination "generic/platform=iOS" -archivePath NebulaTide.xcarchive \
+                     DEVELOPMENT_TEAM="$APPLE_TEAM_ID" CODE_SIGN_STYLE=Automatic archive
+
+          cat > export.plist <<PL
+          <?xml version="1.0" encoding="UTF-8"?>
+          <plist version="1.0"><dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>teamID</key><string>$APPLE_TEAM_ID</string>
+            <key>uploadSymbols</key><true/>
+          </dict></plist>
+          PL
+          xcodebuild -exportArchive -archivePath NebulaTide.xcarchive \
+                     -exportOptionsPlist export.plist -exportPath ipa
+
+          # App Store Connect API key, then upload for TestFlight
+          mkdir -p ~/.appstoreconnect/private_keys
+          echo "$ASC_KEY_P8" | base64 -d > ~/.appstoreconnect/private_keys/AuthKey_$ASC_KEY_ID.p8
+          xcrun altool --upload-app -f ipa/*.ipa -t ios \
+                       --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID"
+
       - uses: actions/upload-artifact@v4
         with:
-          name: NebulaTide-iOS-unsigned
-          path: build-ios/NebulaTide_artefacts/Release/Standalone
+          name: NebulaTide-iOS
+          path: |
+            build-ios/NebulaTide_artefacts/Release/Standalone
+            ipa/*.ipa
 
   # ──────────────────────────────────────────────────────────────────────────
   # Android: Projucer-generated Gradle project in Builds/Android. Sounds are
@@ -263,7 +324,6 @@ jobs:
   # debug-signed APK that can be sideloaded for testing.
   android:
     runs-on: ubuntu-latest
-    continue-on-error: true      # parked for now — must never block Windows/Mac releases
     steps:
       - uses: actions/checkout@v4
 
@@ -298,8 +358,10 @@ jobs:
           cmake -S . -B build-lin -DCMAKE_BUILD_TYPE=Release
           cmake --build build-lin --target NebulaPack -j
           PACK=$(find build-lin -name NebulaPack -type f -executable | head -1)
-          "$PACK" presets NebulaTide.ntlib
+          # Ogg keeps the app under Google Play's 150 MB delivery limit
+          "$PACK" presets NebulaTide.ntlib --ogg 7
           "$PACK" --verify NebulaTide.ntlib
+          ls -lh NebulaTide.ntlib
           A="$GITHUB_WORKSPACE/Builds/Android/app/src/main/assets"
           mkdir -p "$A" && cp NebulaTide.ntlib "$A/"
           ls -la "$A"
@@ -328,7 +390,7 @@ jobs:
             -dname "CN=Android Debug,O=Android,C=US"
           cd Builds/Android
           chmod +x gradlew
-          # on failure, publish an error digest as annotations (publicly readable)
+          # on failure, publish an error digest as annotations (readable via API)
           gradle_run() {
             set +e; ./gradlew --no-daemon --stacktrace "$@" 2>&1 | tee gradle.log; local code=${PIPESTATUS[0]}; set -e
             if [ "$code" != "0" ]; then
@@ -346,30 +408,41 @@ jobs:
           }
           if [ -n "$ANDROID_KEYSTORE_B64" ]; then
             echo "$ANDROID_KEYSTORE_B64" | base64 -d > release.keystore
-            gradle_run assembleRelease_Release
             BT=$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)
+
+            # 1. APK — for your website / direct download
+            gradle_run assembleRelease_Release
             APK=$(find app/build/outputs/apk -iname "*release*.apk" | head -1)
-            "$ANDROID_HOME/build-tools/$BT/zipalign" -p 4 "$APK" aligned.apk
+            "$ANDROID_HOME/build-tools/$BT/zipalign" -p -f 4 "$APK" aligned.apk
             "$ANDROID_HOME/build-tools/$BT/apksigner" sign --ks release.keystore \
               --ks-pass "pass:$ANDROID_KEYSTORE_PASSWORD" --ks-key-alias "$ANDROID_KEY_ALIAS" \
               --out ../../NebulaTide-Android.apk aligned.apk
+            "$ANDROID_HOME/build-tools/$BT/apksigner" verify ../../NebulaTide-Android.apk
+
+            # 2. AAB — the format Google Play requires for new apps
+            gradle_run bundleRelease_Release
+            AAB=$(find app/build/outputs/bundle -iname "*.aab" | head -1)
+            jarsigner -keystore release.keystore -storepass "$ANDROID_KEYSTORE_PASSWORD" \
+              -signedjar ../../NebulaTide-Android.aab "$AAB" "$ANDROID_KEY_ALIAS"
           else
             gradle_run assembleDebug_Debug
             cp "$(find app/build/outputs/apk -name '*.apk' | head -1)" ../../NebulaTide-Android-debug.apk
           fi
-          ls -la ../../*.apk
+          ls -la ../../NebulaTide-Android* || true
 
       - uses: actions/upload-artifact@v4
         with:
           name: NebulaTide-Android
-          path: "*.apk"
+          path: |
+            NebulaTide-Android*.apk
+            NebulaTide-Android*.aab
 
   # ──────────────────────────────────────────────────────────────────────────
   # On a version tag, collect everything into a GitHub Release so the zips
   # have permanent download links for the website.
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [windows, macos]      # android is parked; its APK attaches only when it succeeds
+    needs: [windows, macos, android, ios]   # release waits for every platform
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -384,3 +457,4 @@ jobs:
             artifacts/NebulaTide-Windows/*
             artifacts/NebulaTide-macOS/*
             artifacts/NebulaTide-Android/*
+          # iOS ships through TestFlight/App Store, never as a download
