@@ -739,7 +739,7 @@ void NebulaTideProcessor::startSource (const PresetSource& src)
     const int gen = padLoadGen.fetch_add (1) + 1;
     const PresetSource source = src;
 
-    loadPool.addJob ([this, source, gen]
+    auto job = [this, source, gen]
     {
         std::unique_ptr<juce::AudioFormatReader> reader (createReaderFor (source));
         if (reader == nullptr)
@@ -763,7 +763,10 @@ void NebulaTideProcessor::startSource (const PresetSource& src)
         v.gain = 0.0f;
         v.targetGain = 1.0f;
         v.active = true;
-    });
+    };
+
+    if (offlineMode.load()) job();      // bounce: decode now, block until ready
+    else loadPool.addJob (job);         // live: decode in the background
 }
 
 void NebulaTideProcessor::selectPad (int index)
@@ -778,6 +781,7 @@ void NebulaTideProcessor::selectPad (int index)
     if (key < 0)
         return;
 
+    pendingRestorePad.store (-1);
     startSource (g.keys[key]);
     currentPad.store (index);
     currentKey.store (key);
@@ -853,7 +857,7 @@ void NebulaTideProcessor::triggerAux (int cat, int index)
     const int gen = auxLoadGen[cat].fetch_add (1) + 1;
     const AuxSound sound = list[index];
 
-    loadPool.addJob ([this, cat, sound, gen]
+    auto job = [this, cat, sound, gen]
     {
         std::unique_ptr<juce::AudioFormatReader> reader (createReaderFor (sound));
         if (reader == nullptr)
@@ -873,7 +877,10 @@ void NebulaTideProcessor::triggerAux (int cat, int index)
         v.gain = 0.0f;
         v.targetGain = 1.0f;
         v.active = true;
-    });
+    };
+
+    if (offlineMode.load()) job();      // bounce: decode now, block until ready
+    else loadPool.addJob (job);         // live: decode in the background
 }
 
 void NebulaTideProcessor::stopAux (int cat)
@@ -922,6 +929,25 @@ void NebulaTideProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 {
     juce::ScopedNoDenormals noDenormals;
 
+    // ── offline rendering (bounce / freeze) ──
+    // Live, commands hop to the message thread and audio decodes in the
+    // background so nothing glitches. Offline the host races ahead of both, so
+    // everything runs synchronously right here instead — blocking is fine when
+    // there's no live stream to underrun.
+    const bool offline = isNonRealtime();
+    offlineMode.store (offline);
+    if (offline)
+    {
+        const int restore = pendingRestorePad.exchange (-1);
+        if (restore >= 0 && currentPad.load() < 0 && restore < presets.size())
+            selectPad (restore);
+    }
+    auto dispatch = [this, offline] (std::function<void()> fn)
+    {
+        if (offline) fn();
+        else juce::MessageManager::callAsync (std::move (fn));
+    };
+
     // ── MIDI control ──
     // Notes C2+ (36+): pitch class = musical key. Octave 1 = control notes:
     //   24 C1 = FX star toggle · 25 C#1 = texture toggle · 26 D1 = next FX ·
@@ -948,7 +974,7 @@ void NebulaTideProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
                 if (zoneOf (n) == 1 && heldNotes.load() > 0) heldNotes.fetch_sub (1);
             }
             if (noteGate.load() && heldNotes.load() == 0 && zoneOf (n) == 1)
-                juce::MessageManager::callAsync ([this] { if (heldNotes.load() == 0) stopAll(); });
+                dispatch ([this] { if (heldNotes.load() == 0) stopAll(); });
             continue;
         }
         if (isNote)
@@ -975,7 +1001,7 @@ void NebulaTideProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
         if (m.isProgramChange())
         {
             const int prog = m.getProgramChangeNumber();
-            juce::MessageManager::callAsync ([this, prog] { selectPad (prog); });
+            dispatch ([this, prog] { selectPad (prog); });
             continue;
         }
 
@@ -1001,7 +1027,7 @@ void NebulaTideProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
                 const int v = isCC ? m.getControllerValue() : 127;
                 const int prev = lastCmdVal[a].exchange (v);
                 if (! isCC || (v >= 64 && prev < 64))
-                    juce::MessageManager::callAsync ([this, a] { runMidiCommand (a); });
+                    dispatch ([this, a] { runMidiCommand (a); });
             }
         }
 
@@ -1014,13 +1040,13 @@ void NebulaTideProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
                 case 1:     // KEYS C3..B4 → musical key by pitch class
                 {
                     const int pc = n % 12;
-                    juce::MessageManager::callAsync ([this, pc] { keyCommand (pc); });
+                    dispatch ([this, pc] { keyCommand (pc); });
                     break;
                 }
                 case 0:     // FX C2..B2 → one note per FX sound (C2 = first)
                 {
                     const int idx = n - fxZoneLo;
-                    juce::MessageManager::callAsync ([this, idx]
+                    dispatch ([this, idx]
                     {
                         if (idx < getAuxSounds (0).size())
                         {
@@ -1033,7 +1059,7 @@ void NebulaTideProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
                 case 2:     // TEXTURES C5..B5 → one note per texture (C5 = first)
                 {
                     const int idx = n - texZoneLo;
-                    juce::MessageManager::callAsync ([this, idx]
+                    dispatch ([this, idx]
                     {
                         if (idx < getAuxSounds (1).size())
                         {
@@ -1175,7 +1201,12 @@ void NebulaTideProcessor::setStateInformation (const void* data, int size)
         auxVoices[c].looping.store ((bool) state.getProperty ("auxLoop" + juce::String (c), true));
     }
     if (pad >= 0)
+    {
+        // offline render instances never pump the message queue — processBlock
+        // picks this up and restores synchronously on the first block
+        pendingRestorePad.store (pad);
         juce::MessageManager::callAsync ([this, pad] { selectPad (pad); });
+    }
 }
 
 juce::AudioProcessorEditor* NebulaTideProcessor::createEditor()

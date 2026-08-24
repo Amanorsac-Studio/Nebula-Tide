@@ -238,6 +238,8 @@ private:
     // counters discard stale loads when the user clicks faster than disk reads.
     juce::ThreadPool loadPool { 1 };
     std::atomic<int> padLoadGen { 0 }, auxLoadGen[2] { { 0 }, { 0 } };
+    std::atomic<bool> offlineMode { false };     // host is bouncing: work synchronously
+    std::atomic<int> pendingRestorePad { -1 };   // state restore for offline instances
 
     // binding encoding: 0 = unbound, else 0x200 | (isCC ? 0x100 : 0) | number
     std::atomic<int> binding[numMidiActions] {};
