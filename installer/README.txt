@@ -1,4 +1,4 @@
-NEBULA TIDE 1.1.7
+NEBULA TIDE 1.2.0
 ===============
 
 An ocean of sound, in every key. Endless drone pads — real recordings in all
@@ -7,25 +7,23 @@ Runs as a standalone app and as a VST3 plugin.
 
 WINDOWS INSTALL
 ---------------
-1. Run  NebulaTide-1.1.7-Setup.exe
+1. Run  NebulaTide-1.2.0-Setup.exe
    (If Windows SmartScreen appears, click "More info" -> "Run anyway".)
 2. Tick "Install VST3 plugin" to use it inside your DAW.
 
 Installed locations:
    App ........ C:\Program Files\Nebula Tide\Nebula Tide.exe
    VST3 ....... C:\Program Files\Common Files\VST3\Nebula Tide.vst3
-   Sounds ..... C:\ProgramData\Nebula Tide\presets
+   Sounds ..... C:ProgramDataNebula TideNebulaTide.ntlib (encrypted)
 
-If you downloaded the SOUND LIBRARY separately (NebulaTide-Sounds-1.1.0.zip),
-unzip it so the files land in  C:\ProgramData\Nebula Tide\presets
 
 macOS INSTALL
 -------------
-Run  NebulaTide-1.1.7-macOS.pkg  — one installer for everything:
+Run  NebulaTide-1.2.0-macOS.pkg  — one installer for everything:
    App ........ /Applications/Nebula Tide.app
    VST3 ....... /Library/Audio/Plug-Ins/VST3/Nebula Tide.vst3
    AU ......... /Library/Audio/Plug-Ins/Components/Nebula Tide.component
-   Sounds ..... /Library/Application Support/Nebula Tide/presets
+   Sounds ..... /Library/Application Support/Nebula Tide/NebulaTide.ntlib (encrypted)
 (If macOS says the installer is from an unidentified developer: right-click
 the .pkg -> Open -> Open.)
 

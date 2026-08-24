@@ -927,6 +927,7 @@ LibraryDownloader::LibraryDownloader (NebulaTideProcessor& p, std::function<void
     });
    #else
     messageText = "Sound library not found.\nPlease reinstall Nebula Tide so the sounds are installed with the app.";
+    diagnosticText = NebulaTideProcessor::librarySearchReport();
     state.store (3);
    #endif
     startTimerHz (10);
@@ -940,7 +941,7 @@ LibraryDownloader::~LibraryDownloader()
 void LibraryDownloader::paint (juce::Graphics& g)
 {
     g.fillAll (colours::bgDeep.withAlpha (0.94f));
-    auto box = getLocalBounds().withSizeKeepingCentre (juce::jmin (560, getWidth() - 40), 220).toFloat();
+    auto box = getLocalBounds().withSizeKeepingCentre (juce::jmin (620, getWidth() - 40), 300).toFloat();
     g.setColour (juce::Colour (0xff031420));
     g.fillRoundedRectangle (box, 18.0f);
     g.setColour (colours::seaBright.withAlpha (0.3f));
@@ -964,6 +965,14 @@ void LibraryDownloader::paint (juce::Graphics& g)
         g.fillRoundedRectangle (bar, 4.0f);
         g.setColour (colours::seaBright);
         g.fillRoundedRectangle (bar.withWidth (bar.getWidth() * (float) fraction.load()), 4.0f);
+    }
+    else if (diagnosticText.isNotEmpty())
+    {
+        // support info: exactly where the app looked
+        g.setFont (ui::bodyFont (9.5f));
+        g.setColour (colours::textDim.withAlpha (0.65f));
+        g.drawFittedText (diagnosticText, box.reduced (24, 0).withTrimmedTop (60).toNearestInt(),
+                          juce::Justification::centredTop, 6);
     }
 }
 

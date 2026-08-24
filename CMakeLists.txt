@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(NebulaTide VERSION 1.1.7)
+project(NebulaTide VERSION 1.2.0)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -64,20 +64,13 @@ else()
     target_compile_definitions(NebulaTide PRIVATE NEBULA_HAS_EMBEDDED_PRESETS=0)
 endif()
 
-# iOS: the sound library ships inside the app bundle (presets/ copied in as
-# resources, keeping fx/ and textures/ subfolders). Nothing is downloaded later.
-if(CMAKE_SYSTEM_NAME STREQUAL "iOS" AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/presets")
-    file(GLOB_RECURSE NEBULA_SOUND_FILES RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}/presets"
-         "${CMAKE_CURRENT_SOURCE_DIR}/presets/*")
-    foreach(rel ${NEBULA_SOUND_FILES})
-        get_filename_component(subdir "${rel}" DIRECTORY)
-        set(abs "${CMAKE_CURRENT_SOURCE_DIR}/presets/${rel}")
-        target_sources(NebulaTide_Standalone PRIVATE "${abs}")
-        set_source_files_properties("${abs}" PROPERTIES
-            MACOSX_PACKAGE_LOCATION "presets/${subdir}" HEADER_FILE_ONLY TRUE)
-    endforeach()
-    list(LENGTH NEBULA_SOUND_FILES NEBULA_SOUND_COUNT)
-    message(STATUS "iOS: bundling ${NEBULA_SOUND_COUNT} sound files into the app")
+# iOS: the encrypted sound container ships inside the app bundle. Build it first
+# with NebulaPack (CI does this), then configure. Nothing is downloaded later.
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS" AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/NebulaTide.ntlib")
+    target_sources(NebulaTide_Standalone PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/NebulaTide.ntlib")
+    set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/NebulaTide.ntlib" PROPERTIES
+        MACOSX_PACKAGE_LOCATION "Resources" HEADER_FILE_ONLY TRUE)
+    message(STATUS "iOS: bundling encrypted sound container into the app")
 endif()
 
 # Beta builds expire: set NEBULA_BETA_EXPIRY to "YYYY-MM-DD" (empty = never)
@@ -96,6 +89,7 @@ target_link_libraries(NebulaTide PRIVATE
     juce::juce_audio_utils
     juce::juce_dsp
     juce::juce_opengl
+    juce::juce_cryptography
     PUBLIC
     juce::juce_recommended_config_flags
     juce::juce_recommended_warning_flags
@@ -111,6 +105,16 @@ target_compile_definitions(NebulaConvert PRIVATE
 )
 target_link_libraries(NebulaConvert PRIVATE
     juce::juce_audio_formats
+    juce::juce_events
+    juce::juce_core
+)
+
+# ── NebulaPack: builds the encrypted .ntlib sound container ──
+juce_add_console_app(NebulaPack PRODUCT_NAME "NebulaPack")
+target_sources(NebulaPack PRIVATE tools/pack/main.cpp)
+target_compile_definitions(NebulaPack PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+target_link_libraries(NebulaPack PRIVATE
+    juce::juce_cryptography
     juce::juce_events
     juce::juce_core
 )

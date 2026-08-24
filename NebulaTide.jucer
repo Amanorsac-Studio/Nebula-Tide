@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
 <JUCERPROJECT id="NbTd01" name="Nebula Tide" projectType="audioplug" jucerFormatVersion="1"
-              version="1.1.7" bundleIdentifier="com.nebulatide.app" companyName="NebulaTide"
+              version="1.2.0" bundleIdentifier="com.nebulatide.app" companyName="NebulaTide"
               pluginFormats="buildStandalone" pluginCharacteristicsValue="pluginIsSynth,pluginWantsMidiIn"
               pluginManufacturerCode="Nblt" pluginCode="Ntid" pluginName="Nebula Tide"
-              pluginDesc="Endless drone pads in every key" defines="NEBULA_HAS_EMBEDDED_PRESETS=0&#10;NEBULA_BETA_EXPIRY=&quot;&quot;&#10;NEBULA_VERSION=&quot;1.1.7&quot;&#10;NEBULA_MOBILE=1&#10;JUCE_CORE_INCLUDE_JNI_HELPERS=1"
+              pluginDesc="Endless drone pads in every key" defines="NEBULA_HAS_EMBEDDED_PRESETS=0&#10;NEBULA_BETA_EXPIRY=&quot;&quot;&#10;NEBULA_VERSION=&quot;1.2.0&quot;&#10;NEBULA_MOBILE=1&#10;JUCE_CORE_INCLUDE_JNI_HELPERS=1"
               useAppConfig="0" addUsingNamespaceToJuceHeader="0" displaySplashScreen="0"
               cppLanguageStandard="17">
   <MAINGROUP id="MainGrp" name="Nebula Tide">
@@ -15,6 +15,7 @@
             file="src/PluginProcessor.h"/>
       <FILE id="SrcEP" name="PluginEditor.cpp" compile="1" resource="0" file="src/PluginEditor.cpp"/>
       <FILE id="SrcEH" name="PluginEditor.h" compile="0" resource="0" file="src/PluginEditor.h"/>
+      <FILE id="SrcNL" name="NtLibrary.h" compile="0" resource="0" file="src/NtLibrary.h"/>
     </GROUP>
     <FILE id="LogoPNG" name="logo.png" compile="0" resource="0" file="assets/logo.png"/>
   </MAINGROUP>
@@ -27,6 +28,7 @@
     <MODULE id="juce_audio_processors" showAllCode="1" useLocalCopy="0" useGlobalPath="0"/>
     <MODULE id="juce_audio_utils" showAllCode="1" useLocalCopy="0" useGlobalPath="0"/>
     <MODULE id="juce_core" showAllCode="1" useLocalCopy="0" useGlobalPath="0"/>
+    <MODULE id="juce_cryptography" showAllCode="1" useLocalCopy="0" useGlobalPath="0"/>
     <MODULE id="juce_data_structures" showAllCode="1" useLocalCopy="0" useGlobalPath="0"/>
     <MODULE id="juce_dsp" showAllCode="1" useLocalCopy="0" useGlobalPath="0"/>
     <MODULE id="juce_events" showAllCode="1" useLocalCopy="0" useGlobalPath="0"/>
@@ -57,6 +59,7 @@
         <MODULEPATH id="juce_audio_processors" path="build/_deps/juce-src/modules"/>
         <MODULEPATH id="juce_audio_utils" path="build/_deps/juce-src/modules"/>
         <MODULEPATH id="juce_core" path="build/_deps/juce-src/modules"/>
+        <MODULEPATH id="juce_cryptography" path="build/_deps/juce-src/modules"/>
         <MODULEPATH id="juce_data_structures" path="build/_deps/juce-src/modules"/>
         <MODULEPATH id="juce_dsp" path="build/_deps/juce-src/modules"/>
         <MODULEPATH id="juce_events" path="build/_deps/juce-src/modules"/>

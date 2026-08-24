@@ -2,6 +2,7 @@
 #include <juce_audio_utils/juce_audio_utils.h>
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_dsp/juce_dsp.h>
+#include "NtLibrary.h"
 
 // ── Seamless looping ──────────────────────────────────────────────────────
 // Instead of jumping from the last sample back to the first (audible "snap"),
@@ -39,7 +40,8 @@ struct PresetSource
     juce::File  file;
     const char* data = nullptr;
     int         dataSize = 0;
-    bool isValid() const { return file.existsAsFile() || data != nullptr; }
+    juce::String libEntry;      // path inside the encrypted .ntlib container
+    bool isValid() const { return file.existsAsFile() || data != nullptr || libEntry.isNotEmpty(); }
 };
 
 // A preset (drone pad) with up to 12 key variants. Key index: 0=C .. 11=B.
@@ -67,11 +69,12 @@ namespace keynames
     static const char* display[12] = { "C","Db","D","Eb","E","F","Gb","G","Ab","A","Bb","B" };
 }
 
-// A named one-shot sound (FX / texture), loaded from disk.
+// A named one-shot sound (FX / texture), from disk or the encrypted container.
 struct AuxSound
 {
     juce::String name;
     juce::File file;
+    juce::String libEntry;
 };
 
 // One-shot player for FX/textures: plays once, or loops while looping is on.
@@ -130,6 +133,8 @@ public:
     // Android: the library is packed into the APK's assets and copied out into
     // userLibraryDir() on first launch (background thread; progress 0..1).
     bool installBundledLibrary (std::function<void (double)> progress);
+    bool installBundledLooseFiles (std::function<void (double)> progress);
+    static juce::String librarySearchReport();   // diagnostics for the "not found" panel
 
     // ── preset / key control (message thread) ──
     const juce::Array<PresetGroup>& getPresets() const { return presets; }
@@ -203,6 +208,12 @@ private:
 
     juce::AudioFormatManager formatManager;
     juce::Array<PresetGroup> presets;
+    juce::OwnedArray<ntlib::Reader> libraries;   // encrypted containers, in memory only
+
+    // Opens an audio reader for a source, decrypting from the container when needed.
+    juce::AudioFormatReader* createReaderFor (const PresetSource&);
+    juce::AudioFormatReader* createReaderFor (const AuxSound&);
+    static juce::Array<juce::File> findLibraryFiles();
 
     static constexpr int maxVoices = 2;
     PadVoice voices[maxVoices];

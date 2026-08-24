@@ -226,9 +226,52 @@ void NebulaTideProcessor::reloadLibrary()
  #include <android/asset_manager.h>
  #include <android/asset_manager_jni.h>
 
-// Copies presets/, presets/fx, presets/textures out of the APK assets into the
-// per-user library folder. Runs on a background thread.
+// Copies the encrypted container out of the APK assets into the app's private
+// data folder on first launch. Runs on a background thread.
 bool NebulaTideProcessor::installBundledLibrary (std::function<void (double)> progress)
+{
+    auto* env = juce::getEnv();
+    auto context = juce::getAppContext();
+    if (env == nullptr || context.get() == nullptr) return false;
+
+    jclass ctxClass = env->GetObjectClass (context.get());
+    jmethodID getAssets = env->GetMethodID (ctxClass, "getAssets", "()Landroid/content/res/AssetManager;");
+    jobject assetMgrObj = env->CallObjectMethod (context.get(), getAssets);
+    AAssetManager* mgr = AAssetManager_fromJava (env, assetMgrObj);
+    if (mgr == nullptr) return false;
+
+    const auto dest = userLibraryDir().getParentDirectory();   // .../Nebula Tide/
+    dest.createDirectory();
+    const auto target = dest.getChildFile ("NebulaTide.ntlib");
+
+    bool ok = false;
+    if (AAsset* a = AAssetManager_open (mgr, "NebulaTide.ntlib", AASSET_MODE_STREAMING))
+    {
+        const juce::int64 total = juce::jmax ((juce::int64) 1, (juce::int64) AAsset_getLength64 (a));
+        target.deleteFile();
+        juce::FileOutputStream out (target);
+        if (out.openedOk())
+        {
+            std::vector<char> buf (1 << 16);
+            juce::int64 written = 0;
+            int n;
+            while ((n = AAsset_read (a, buf.data(), buf.size())) > 0)
+            {
+                out.write (buf.data(), (size_t) n);
+                written += n;
+                if (progress) progress ((double) written / (double) total);
+            }
+            out.flush();
+            ok = written > 0;
+        }
+        AAsset_close (a);
+    }
+    env->DeleteLocalRef (assetMgrObj);
+    return ok;
+}
+
+// (legacy loose-file installer, kept for reference)
+bool NebulaTideProcessor::installBundledLooseFiles (std::function<void (double)> progress)
 {
     auto* env = juce::getEnv();
     auto context = juce::getAppContext();
@@ -287,6 +330,23 @@ bool NebulaTideProcessor::installBundledLibrary (std::function<void (double)> pr
 #else
 bool NebulaTideProcessor::installBundledLibrary (std::function<void (double)>) { return false; }
 #endif
+
+// Where the app looked for its library — shown in the "not found" panel so a
+// single screenshot from a user tells us exactly what went wrong.
+juce::String NebulaTideProcessor::librarySearchReport()
+{
+    juce::StringArray lines;
+    const auto exe = juce::File::getSpecialLocation (juce::File::currentExecutableFile);
+    lines.add ("binary: " + exe.getFullPathName());
+    for (auto base : { juce::File::getSpecialLocation (juce::File::commonApplicationDataDirectory)
+                           .getChildFile ("Application Support").getChildFile ("Nebula Tide"),
+                       juce::File::getSpecialLocation (juce::File::commonApplicationDataDirectory)
+                           .getChildFile ("Nebula Tide"),
+                       juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
+                           .getChildFile ("Application Support").getChildFile ("Nebula Tide") })
+        lines.add ((base.isDirectory() ? juce::String ("found dir: ") : juce::String ("missing:   ")) + base.getFullPathName());
+    return lines.joinIntoString ("\n");
+}
 
 //==============================================================================
 NebulaTideProcessor::NebulaTideProcessor()
@@ -460,22 +520,93 @@ void NebulaTideProcessor::scanPresets()
     }
 #endif
 
-    applyManifest();
-
-    // ── FX / texture sounds: presets/fx and presets/textures folders ──
+    // ── encrypted containers: used when no plain folder supplied the sounds ──
     fxSounds.clear();
     texSounds.clear();
+    if (presets.isEmpty())
+    {
+        libraries.clear();
+        for (auto& lib : findLibraryFiles())
+        {
+            auto reader = std::make_unique<ntlib::Reader>();
+            if (! reader->open (lib)) continue;
+
+            for (const auto& e : reader->getEntries())
+            {
+                const auto name = e.path.fromLastOccurrenceOf ("/", false, false);
+                if (name.equalsIgnoreCase ("manifest.json")) continue;
+
+                PresetSource src;
+                src.libEntry = e.path;
+                const auto stem = name.upToLastOccurrenceOf (".", false, false);
+
+                if (e.path.startsWithIgnoreCase ("fx/"))
+                    fxSounds.add ({ stem.replaceCharacters ("_-", "  "), {}, e.path });
+                else if (e.path.startsWithIgnoreCase ("textures/"))
+                    texSounds.add ({ stem.replaceCharacters ("_-", "  "), {}, e.path });
+                else if (! e.path.containsChar ('/'))
+                    addSource (stem, src);
+            }
+            libraries.add (reader.release());
+        }
+    }
+
+    applyManifest();
+
+    // ── FX / texture sounds from a plain folder (author mode) ──
     if (presetsDir.isDirectory())
     {
         auto scanCat = [] (const juce::File& sub, juce::Array<AuxSound>& into)
         {
             if (! sub.isDirectory()) return;
             for (auto& f : sub.findChildFiles (juce::File::findFiles, false, "*.wav;*.mp3;*.ogg;*.flac;*.aiff"))
-                into.add ({ f.getFileNameWithoutExtension().replaceCharacters ("_-", "  "), f });
+                into.add ({ f.getFileNameWithoutExtension().replaceCharacters ("_-", "  "), f, {} });
         };
         scanCat (presetsDir.getChildFile ("fx"), fxSounds);
         scanCat (presetsDir.getChildFile ("textures"), texSounds);
     }
+}
+
+// Every .ntlib the app can see: beside/inside its own bundle first (so a plugin
+// always finds the copy shipped with it), then the shared install location.
+juce::Array<juce::File> NebulaTideProcessor::findLibraryFiles()
+{
+    juce::Array<juce::File> found;
+    auto addFrom = [&found] (const juce::File& dir)
+    {
+        if (! dir.isDirectory()) return;
+        for (auto& f : dir.findChildFiles (juce::File::findFiles, false, "*.ntlib"))
+            if (! found.contains (f)) found.add (f);
+    };
+
+    // inside this binary's bundle (VST3/AU/app), walking up a few levels
+    auto dir = juce::File::getSpecialLocation (juce::File::currentExecutableFile).getParentDirectory();
+    for (int up = 0; up < 6 && dir.exists(); ++up)
+    {
+        addFrom (dir);
+        addFrom (dir.getChildFile ("Resources"));
+        addFrom (dir.getChildFile ("Contents").getChildFile ("Resources"));
+        addFrom (dir.getChildFile ("sounds"));
+        dir = dir.getParentDirectory();
+    }
+
+    // the app bundle itself (iOS/macOS standalone)
+    const auto app = juce::File::getSpecialLocation (juce::File::currentApplicationFile);
+    addFrom (app);
+    addFrom (app.getChildFile ("Contents").getChildFile ("Resources"));
+
+    // shared install locations
+    const auto common = juce::File::getSpecialLocation (juce::File::commonApplicationDataDirectory);
+    const auto user   = juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory);
+    for (auto base : { common, user })
+    {
+        addFrom (base.getChildFile ("Nebula Tide"));
+        addFrom (base.getChildFile ("Application Support").getChildFile ("Nebula Tide"));
+    }
+    addFrom (juce::File::getSpecialLocation (juce::File::globalApplicationsDirectory)
+                 .getChildFile ("Nebula Tide"));
+
+    return found;
 }
 
 // Reads presets/manifest.json (authored in Nebula Forge) and applies colour,
@@ -487,6 +618,17 @@ void NebulaTideProcessor::applyManifest()
     const auto manifest = findPresetsDir().getChildFile ("manifest.json");
     if (manifest.existsAsFile())
         text = manifest.loadFileAsString();
+
+    if (text.isEmpty())                       // from an encrypted container
+        for (auto* lib : libraries)
+        {
+            const auto block = lib->read ("manifest.json");
+            if (block.getSize() > 0)
+            {
+                text = juce::String::fromUTF8 ((const char*) block.getData(), (int) block.getSize());
+                break;
+            }
+        }
 
 #if NEBULA_HAS_EMBEDDED_PRESETS
     if (text.isEmpty())
@@ -552,6 +694,44 @@ void NebulaTideProcessor::prepareToPlay (double sampleRate, int)
     reverb.setSampleRate (sampleRate);
 }
 
+// Audio comes either from a plain file (author mode) or is decrypted out of the
+// container into memory — it is never written to disk in playable form.
+juce::AudioFormatReader* NebulaTideProcessor::createReaderFor (const PresetSource& src)
+{
+    if (src.file.existsAsFile())
+        return formatManager.createReaderFor (src.file);
+
+    if (src.data != nullptr)
+        return formatManager.createReaderFor (
+            std::make_unique<juce::MemoryInputStream> (src.data, (size_t) src.dataSize, false));
+
+    if (src.libEntry.isNotEmpty())
+        for (auto* lib : libraries)
+        {
+            auto block = lib->read (src.libEntry);
+            if (block.getSize() > 0)
+                return formatManager.createReaderFor (
+                    std::make_unique<juce::MemoryInputStream> (std::move (block)));
+        }
+    return nullptr;
+}
+
+juce::AudioFormatReader* NebulaTideProcessor::createReaderFor (const AuxSound& s)
+{
+    if (s.file.existsAsFile())
+        return formatManager.createReaderFor (s.file);
+
+    if (s.libEntry.isNotEmpty())
+        for (auto* lib : libraries)
+        {
+            auto block = lib->read (s.libEntry);
+            if (block.getSize() > 0)
+                return formatManager.createReaderFor (
+                    std::make_unique<juce::MemoryInputStream> (std::move (block)));
+        }
+    return nullptr;
+}
+
 void NebulaTideProcessor::startSource (const PresetSource& src)
 {
     // Decode on the worker thread: the current sound keeps playing untouched,
@@ -561,13 +741,7 @@ void NebulaTideProcessor::startSource (const PresetSource& src)
 
     loadPool.addJob ([this, source, gen]
     {
-        std::unique_ptr<juce::AudioFormatReader> reader;
-        if (source.file.existsAsFile())
-            reader.reset (formatManager.createReaderFor (source.file));
-        else if (source.data != nullptr)
-            reader.reset (formatManager.createReaderFor (
-                std::make_unique<juce::MemoryInputStream> (source.data, (size_t) source.dataSize, false)));
-
+        std::unique_ptr<juce::AudioFormatReader> reader (createReaderFor (source));
         if (reader == nullptr)
             return;
 
@@ -677,11 +851,11 @@ void NebulaTideProcessor::triggerAux (int cat, int index)
     // update selection immediately (UI), decode in the background (no freeze)
     auxIndex[cat].store (index);
     const int gen = auxLoadGen[cat].fetch_add (1) + 1;
-    const juce::File file = list[index].file;
+    const AuxSound sound = list[index];
 
-    loadPool.addJob ([this, cat, file, gen]
+    loadPool.addJob ([this, cat, sound, gen]
     {
-        std::unique_ptr<juce::AudioFormatReader> reader (formatManager.createReaderFor (file));
+        std::unique_ptr<juce::AudioFormatReader> reader (createReaderFor (sound));
         if (reader == nullptr)
             return;
 

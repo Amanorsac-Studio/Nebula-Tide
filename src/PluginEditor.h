@@ -270,7 +270,7 @@ private:
     std::function<void()> onReady;
     std::atomic<double> fraction { 0.0 };
     std::atomic<int> state { 0 };    // 2 installing, 3 message only
-    juce::String messageText;
+    juce::String messageText, diagnosticText;
     juce::ThreadPool pool { 1 };
 };
 

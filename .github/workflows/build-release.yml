@@ -52,6 +52,12 @@ jobs:
           "Sound library: $n files"
           if ($n -lt 1) { throw "no files extracted from sounds.zip" }
 
+      - name: Pack the encrypted container
+        run: |
+          cmake --build build --config Release --target NebulaPack
+          ./build/NebulaPack_artefacts/Release/NebulaPack.exe presets NebulaTide.ntlib
+          ./build/NebulaPack_artefacts/Release/NebulaPack.exe --verify NebulaTide.ntlib
+
       - name: Install Inno Setup
         run: choco install innosetup --no-progress -y
 
@@ -147,6 +153,13 @@ jobs:
 
       # One-click macOS installer (.pkg): app → /Applications, VST3 + AU →
       # /Library/Audio/Plug-Ins, sounds → /Library/Application Support.
+      - name: Pack the encrypted container
+        run: |
+          cmake --build build-mac --config Release --target NebulaPack
+          PACK=$(find build-mac -name NebulaPack -type f -perm +111 | head -1)
+          "$PACK" presets NebulaTide.ntlib
+          "$PACK" --verify NebulaTide.ntlib
+
       - name: Build .pkg installer
         run: |
           V="${GITHUB_REF_NAME#v}"; case "$V" in 1*) ;; *) V="1.0.0";; esac
@@ -158,10 +171,22 @@ jobs:
           cp -R "$R/Standalone/Nebula Tide.app" pkgroot/Applications/
           cp -R "$R/VST3/Nebula Tide.vst3" "pkgroot/Library/Audio/Plug-Ins/VST3/"
           cp -R "$R/AU/Nebula Tide.component" "pkgroot/Library/Audio/Plug-Ins/Components/"
-          [ -d presets ] && cp -R presets "pkgroot/Library/Application Support/Nebula Tide/presets"
+          cp NebulaTide.ntlib "pkgroot/Library/Application Support/Nebula Tide/"
+
+          # remove the old unencrypted folder left by versions up to 1.1.7
+          mkdir -p scripts
+          cat > scripts/postinstall <<'SH'
+          #!/bin/sh
+          rm -rf "/Library/Application Support/Nebula Tide/presets"
+          rm -rf "/Library/Audio/Plug-Ins/VST3/presets"
+          rm -rf "$HOME/Library/Application Support/Nebula Tide/presets"
+          exit 0
+          SH
+          chmod +x scripts/postinstall
+
           mkdir -p dist
-          pkgbuild --root pkgroot --identifier com.nebulatide.app --version "$V" \
-                   --install-location / "dist/NebulaTide-$V-macOS.pkg"
+          pkgbuild --root pkgroot --scripts scripts --identifier com.nebulatide.app \
+                   --version "$V" --install-location / "dist/NebulaTide-$V-macOS.pkg"
 
       - name: Package zips
         run: |
@@ -202,6 +227,14 @@ jobs:
           mkdir -p presets && tar -xf sounds.zip -C presets
           echo "Sound library: $(find presets -type f | wc -l) files"
 
+      - name: Pack the encrypted container
+        run: |
+          cmake -S . -B build-pack -G Xcode
+          cmake --build build-pack --config Release --target NebulaPack
+          PACK=$(find build-pack -name NebulaPack -type f -perm +111 | head -1)
+          "$PACK" presets NebulaTide.ntlib
+          "$PACK" --verify NebulaTide.ntlib
+
       - name: Configure (iOS)
         run: cmake -S . -B build-ios -G Xcode -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0
 
@@ -234,7 +267,7 @@ jobs:
 
       # the library is packed INTO the APK as assets; the app copies it out on
       # first launch (no downloads after install)
-      - name: Fetch sound library into APK assets
+      - name: Pack the encrypted container into APK assets
         env:
           SOUNDS_URL: ${{ endsWith(vars.SOUNDS_URL, '.zip') && vars.SOUNDS_URL || 'https://github.com/amanorsac/Nebula-Tide/releases/download/v1.0.0/NebulaTide-Sounds-1.1.0.zip' }}
         run: |
@@ -248,11 +281,20 @@ jobs:
             [ "$ok" = 1 ] && break
           done
           [ "$ok" = 1 ] || { echo "::error::could not download the sound library"; exit 1; }
-          A="$GITHUB_WORKSPACE/Builds/Android/app/src/main/assets/presets"
-          mkdir -p "$A" && unzip -q -o "$GITHUB_WORKSPACE/sounds.zip" -d "$A"   # GNU tar can't read zips
-          rm -rf "$A/Stems"
-          echo "APK assets: $(find "$A" -type f | wc -l) files"
-          [ "$(find "$A" -type f | wc -l)" -gt 0 ] || { echo "::error::no sound files extracted"; exit 1; }
+          mkdir -p presets && unzip -q -o sounds.zip -d presets   # GNU tar can't read zips
+          rm -rf presets/Stems
+          # build the packer and produce the encrypted container
+          sudo apt-get -qq update && sudo apt-get -qq install -y libasound2-dev libfreetype-dev \
+               libcurl4-openssl-dev libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev \
+               libwebkit2gtk-4.1-dev libgtk-3-dev >/dev/null
+          cmake -S . -B build-lin -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-lin --target NebulaPack -j
+          PACK=$(find build-lin -name NebulaPack -type f -executable | head -1)
+          "$PACK" presets NebulaTide.ntlib
+          "$PACK" --verify NebulaTide.ntlib
+          A="$GITHUB_WORKSPACE/Builds/Android/app/src/main/assets"
+          mkdir -p "$A" && cp NebulaTide.ntlib "$A/"
+          ls -la "$A"
 
       - name: Build APK
         env:
