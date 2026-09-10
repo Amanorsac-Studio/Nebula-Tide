@@ -95,8 +95,13 @@ jobs:
       - name: Build installer
         shell: pwsh
         run: |
-          $v = "${{ github.ref_name }}".TrimStart("v")
-          if (-not $v.StartsWith("1")) { $v = "1.0.0" }
+          # CMakeLists.txt is the one place the version is stated. This used to
+          # read the branch name, so building "v2" produced "2", failed a check
+          # that expected a 1, and silently fell back to 1.0.0 — which is how a
+          # version 2 installer came out labelled 1.0.0.
+          $v = (Select-String -Path CMakeLists.txt -Pattern 'project\(NebulaTide VERSION ([0-9.]+)\)').Matches[0].Groups[1].Value
+          if ("${{ github.ref_type }}" -eq "tag") { $v = "${{ github.ref_name }}".TrimStart("v") }
+          "Building version $v"
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /Q /DAppVersion=$v installer\NebulaTide.iss
 
       - name: Package portable zip
@@ -279,7 +284,10 @@ jobs:
 
       - name: Build .pkg installer
         run: |
-          V="${GITHUB_REF_NAME#v}"; case "$V" in 1*) ;; *) V="1.0.0";; esac
+          # Same source as the Windows job: CMakeLists, unless this is a tag.
+          V=$(sed -n 's/^project(NebulaTide VERSION \([0-9.]*\)).*/\1/p' CMakeLists.txt)
+          [ "$GITHUB_REF_TYPE" = tag ] && V="${GITHUB_REF_NAME#v}"
+          echo "Building version $V"
           R=build-mac/NebulaTide_artefacts/Release
           mkdir -p pkgroot/Applications \
                    "pkgroot/Library/Audio/Plug-Ins/VST3" \
