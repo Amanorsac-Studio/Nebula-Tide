@@ -16,3 +16,6 @@ NebulaTide.ntlib
 installer/output/mobile-q*.ntlib
 installer/*.zip
 signing/
+
+# artifacts pulled down from CI runs, never committed
+dist-ci/
