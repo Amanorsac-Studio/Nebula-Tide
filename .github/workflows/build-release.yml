@@ -133,6 +133,12 @@ jobs:
       # Optional codesign + notarize — runs only when signing secrets exist.
       # Repo secrets: MAC_CERT_P12 (base64), MAC_CERT_PASSWORD, APPLE_ID,
       # APPLE_TEAM_ID, APPLE_APP_PASSWORD
+      - name: Fail if macOS signing is not configured
+        if: env.HAS_MAC_SIGNING != 'true'
+        run: |
+          echo "::error::macOS signing is off, so this job would ship an unsigned app. It needs MAC_CERT_P12."
+          exit 1
+
       - name: Sign & notarize
         if: env.HAS_MAC_SIGNING == 'true'
         env:
@@ -326,7 +332,11 @@ jobs:
     runs-on: macos-14
     env:
       # step-level `if` can read job env but not secrets directly
-      HAS_IOS_SIGNING: ${{ secrets.IOS_DIST_CERT_P12 != '' && secrets.ASC_KEY_P8 != '' }}
+      # APPLE_DIST_P12 is an Apple Distribution certificate, which covers iOS
+      # and the Mac App Store. IOS_DIST_CERT_P12, which this used to name, was
+      # never created, so the gate was always false and the job went green
+      # having signed nothing.
+      HAS_IOS_SIGNING: ${{ secrets.APPLE_DIST_P12 != '' && secrets.ASC_KEY_P8 != '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -391,44 +401,64 @@ jobs:
       # Unsigned build always runs: it proves the iOS/iPadOS code compiles.
       # A skipped signing step used to leave the job green with nothing
       # uploaded, which reads as success and is not. Say so out loud.
-      - name: Warn if iOS signing is not configured
+      - name: Fail if iOS signing is not configured
         if: env.HAS_IOS_SIGNING != 'true'
         run: |
-          echo "::warning::iOS signing is off, so this job produces an unsigned build and uploads nothing to TestFlight. It needs IOS_DIST_CERT_P12 and ASC_KEY_P8; one or both are empty for this repository."
+          echo "::error::iOS signing is off, so this job would produce an unsigned build and upload nothing to TestFlight. It needs APPLE_DIST_P12 and ASC_KEY_P8; one or both are empty for this repository."
+          exit 1
 
       - name: Build (unsigned)
         run: cmake --build build-ios --config Release --target NebulaTide_Standalone -- CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
 
       # Signed App Store build + TestFlight upload, when the Apple secrets exist.
-      # Needs: IOS_DIST_CERT_P12 (base64), IOS_CERT_PASSWORD, IOS_PROVISION_PROFILE
-      # (base64 .mobileprovision), APPLE_TEAM_ID, ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8 (base64)
+      # Needs: APPLE_DIST_P12 (base64) and APPLE_DIST_PASSWORD, APPLE_TEAM_ID,
+      # and the App Store Connect key: ASC_KEY_P8 (base64), ASC_KEY_ID, ASC_ISSUER_ID.
+      # No provisioning profile secret: the key lets Xcode fetch one itself.
       - name: Archive & upload to TestFlight
         if: env.HAS_IOS_SIGNING == 'true'
         env:
-          IOS_DIST_CERT_P12: ${{ secrets.IOS_DIST_CERT_P12 }}
-          IOS_CERT_PASSWORD: ${{ secrets.IOS_CERT_PASSWORD }}
-          IOS_PROVISION_PROFILE: ${{ secrets.IOS_PROVISION_PROFILE }}
+          APPLE_DIST_P12: ${{ secrets.APPLE_DIST_P12 }}
+          APPLE_DIST_PASSWORD: ${{ secrets.APPLE_DIST_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
         run: |
-          # signing identity into a temporary keychain
-          echo "$IOS_DIST_CERT_P12" | base64 -d > dist.p12
-          security create-keychain -p ci ios.keychain
-          security default-keychain -s ios.keychain
-          security unlock-keychain -p ci ios.keychain
-          security import dist.p12 -k ios.keychain -P "$IOS_CERT_PASSWORD" -T /usr/bin/codesign
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k ci ios.keychain
+          # Same keychain handling as the macOS job: the .keychain-db suffix is
+          # required on current runners, and the certificate goes through a
+          # variable rather than the command line.
+          P12="$RUNNER_TEMP/dist.p12"
+          KEYCHAIN="$RUNNER_TEMP/ios.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -base64 24)"
+          printf %s "$APPLE_DIST_P12" | tr -d '[:space:]' | base64 --decode > "$P12"
+          [ "$(wc -c < "$P12")" -gt 1000 ] || { echo "::error::APPLE_DIST_P12 did not decode to a certificate"; exit 1; }
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$P12" -k "$KEYCHAIN" -P "$APPLE_DIST_PASSWORD" -f pkcs12 \
+            -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s \
+            -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" > /dev/null
+          security list-keychains -d user -s "$KEYCHAIN" \
+            $(security list-keychains -d user | tr -d '"' | xargs)
+          rm -f "$P12"
 
-          # provisioning profile
-          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
-          echo "$IOS_PROVISION_PROFILE" | base64 -d > ~/Library/MobileDevice/Provisioning\ Profiles/nebula.mobileprovision
+          # No provisioning profile secret exists, and none is needed: with the
+          # App Store Connect key, Xcode creates and downloads the profile
+          # itself. That is one less credential to rotate by hand.
+          KEY_DIR=~/.appstoreconnect/private_keys
+          mkdir -p "$KEY_DIR"
+          ASC_KEY_FILE="$KEY_DIR/AuthKey_$ASC_KEY_ID.p8"
+          printf %s "$ASC_KEY_P8" | tr -d '[:space:]' | base64 --decode > "$ASC_KEY_FILE"
 
           xcodebuild -list -project build-ios/NebulaTide.xcodeproj || true
           xcodebuild -project build-ios/NebulaTide.xcodeproj \
                      -scheme NebulaTide_Standalone -configuration Release \
                      -destination "generic/platform=iOS" -archivePath NebulaTide.xcarchive \
+                     -allowProvisioningUpdates \
+                     -authenticationKeyPath "$ASC_KEY_FILE" \
+                     -authenticationKeyID "$ASC_KEY_ID" \
+                     -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
                      DEVELOPMENT_TEAM="$APPLE_TEAM_ID" CODE_SIGN_STYLE=Automatic archive
 
           cat > export.plist <<PL
@@ -440,13 +470,15 @@ jobs:
           </dict></plist>
           PL
           xcodebuild -exportArchive -archivePath NebulaTide.xcarchive \
-                     -exportOptionsPlist export.plist -exportPath ipa
+                     -exportOptionsPlist export.plist -exportPath ipa \
+                     -allowProvisioningUpdates \
+                     -authenticationKeyPath "$ASC_KEY_FILE" \
+                     -authenticationKeyID "$ASC_KEY_ID" \
+                     -authenticationKeyIssuerID "$ASC_ISSUER_ID"
 
-          # App Store Connect API key, then upload for TestFlight
-          mkdir -p ~/.appstoreconnect/private_keys
-          echo "$ASC_KEY_P8" | base64 -d > ~/.appstoreconnect/private_keys/AuthKey_$ASC_KEY_ID.p8
           xcrun altool --upload-app -f ipa/*.ipa -t ios \
                        --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID"
+          rm -f "$ASC_KEY_FILE"
 
       - uses: actions/upload-artifact@v4
         with:
