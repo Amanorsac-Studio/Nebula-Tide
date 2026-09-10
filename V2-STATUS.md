@@ -68,7 +68,7 @@ count was the only sign.
 ## Testing this build
 
 The app reads the library from the folder named in
-`%APPDATA%\Nebula Tide\library-path.txt`, currently pointing at
+`Documents\Amanorsac Studio\Nebula Tide\library-path.txt`, currently pointing at
 `Desktop\NebulaTide-v2-TEST\Sounds` because replacing the copy in
 `C:\ProgramData\Nebula Tide` needs admin rights. USE DEFAULT in Settings goes
 back to the ProgramData one, which is still the v1 library.

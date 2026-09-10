@@ -6,6 +6,10 @@
  #include "BinaryData.h"
 #endif
 
+// Documents/Amanorsac Studio/<Product>/ - defined further down, declared here
+// because the library paths above need it.
+static juce::File productDataDir();
+
 //==============================================================================
 void PadVoice::render (juce::AudioBuffer<float>& out, int numSamples,
                        double deviceSampleRate, float fadePerSample)
@@ -176,14 +180,7 @@ static juce::File findPresetsDir()
 
 juce::File NebulaTideProcessor::userLibraryDir()
 {
-   #if JUCE_MAC
-    // ~/Library/Application Support/Nebula Tide/presets (Mac convention)
-    return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
-               .getChildFile ("Application Support").getChildFile ("Nebula Tide").getChildFile ("presets");
-   #else
-    return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
-               .getChildFile ("Nebula Tide").getChildFile ("presets");
-   #endif
+    return productDataDir().getChildFile ("Library");
 }
 
 void NebulaTideProcessor::reloadLibrary()
@@ -577,14 +574,7 @@ void NebulaTideProcessor::scanPresets()
 // than in the library folder, which may be the very thing that is missing.
 static juce::File libraryPointerFile()
 {
-   #if JUCE_MAC
-    auto dir = juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
-                   .getChildFile ("Application Support").getChildFile ("Nebula Tide");
-   #else
-    auto dir = juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
-                   .getChildFile ("Nebula Tide");
-   #endif
-    return dir.getChildFile ("library-path.txt");
+    return productDataDir().getChildFile ("library-path.txt");
 }
 
 juce::File NebulaTideProcessor::userChosenLibraryDir()
@@ -1457,15 +1447,51 @@ juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 //       My_Pad_C.wav, My_Pad_D.wav, ...      pads, one file per key
 //       fx/           textures/               their own one-shots
 //       user-presets.json                     names, colours, reverb defaults
+//==============================================================================
+// ── Where this product keeps its data ────────────────────────────────────
+// Documents/Amanorsac Studio/<Product>/ is the company convention (Folder
+// Structure Standard). One helper, so the presets, the library pointer and
+// anything added later cannot drift apart from each other or from the standard.
+//
+// Licence files are the deliberate exception and stay in LOCALAPPDATA: they are
+// DPAPI-encrypted and bound to one machine, and Documents is commonly synced to
+// OneDrive, which would carry a device-bound proof to a machine it was never
+// issued for.
+static juce::File productDataDir()
+{
+    return juce::File::getSpecialLocation (juce::File::userDocumentsDirectory)
+               .getChildFile ("Amanorsac Studio")
+               .getChildFile ("Nebula Tide");
+}
+
+// Anything the previous layout wrote is moved across once, quietly, so an
+// upgrade does not look like every user preset was deleted.
+static void migrateLegacyDataOnce()
+{
+    static bool done = false;
+    if (done) return;
+    done = true;
+
+    const auto legacy = juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
+                            .getChildFile ("Nebula Tide");
+    if (! legacy.isDirectory()) return;
+
+    const auto dest = productDataDir();
+    dest.createDirectory();
+
+    for (auto& item : legacy.findChildFiles (juce::File::findFilesAndDirectories, false))
+    {
+        const auto target = dest.getChildFile (item.getFileName());
+        if (target.exists()) continue;              // never overwrite newer data
+        if (item.isDirectory()) item.copyDirectoryTo (target);
+        else                    item.copyFileTo (target);
+    }
+}
+
 juce::File NebulaTideProcessor::userContentDir()
 {
-   #if JUCE_MAC
-    return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
-               .getChildFile ("Application Support").getChildFile ("Nebula Tide").getChildFile ("User");
-   #else
-    return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
-               .getChildFile ("Nebula Tide").getChildFile ("User");
-   #endif
+    migrateLegacyDataOnce();
+    return productDataDir().getChildFile ("User");
 }
 
 bool NebulaTideProcessor::isUserAux (const AuxSound& s)

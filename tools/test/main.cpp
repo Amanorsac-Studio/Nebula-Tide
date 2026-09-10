@@ -665,6 +665,65 @@ static void testDensity()
     }
 }
 
+//==============================================================================
+// The About screen carries the Creative Commons attributions, and CREDITS.txt
+// carries them too. Two copies drift. This fails the build when they do, which
+// matters more than it looks: attribution is a condition of the CC BY licence,
+// so a name quietly dropped from one of them is a licence breach, not a typo.
+static void testCredits()
+{
+    std::cout << "\n-- credits --" << std::endl;
+
+    const juce::File repo (NEBULA_REPO_DIR);
+    const auto header  = repo.getChildFile ("src").getChildFile ("AboutView.h");
+    const auto credits = repo.getChildFile ("CREDITS.txt");
+
+    check (header.existsAsFile() && credits.existsAsFile(),
+           "AboutView.h and CREDITS.txt are both present");
+    if (! header.existsAsFile() || ! credits.existsAsFile()) return;
+
+    const auto creditsText = credits.loadFileAsString();
+    const auto headerText  = header.loadFileAsString();
+
+    // Every "title  -  author" line between ccByCredits's braces.
+    const int start = headerText.indexOf ("ccByCredits");
+    const int open  = headerText.indexOf (start, "{");
+    const int close = headerText.indexOf (open, "};");
+    check (start > 0 && open > start && close > open, "ccByCredits list found in the header");
+    if (close <= open) return;
+
+    juce::StringArray entries;
+    entries.addTokens (headerText.substring (open + 1, close), "\n", "");
+
+    int checked = 0;
+    for (auto line : entries)
+    {
+        // trailing comma first, or unquoted() sees "…klankbeeld", and leaves
+        // the closing quote attached to the author's name
+        line = line.trim().trimCharactersAtEnd (",").trim().unquoted();
+        if (! line.contains ("  -  ")) continue;
+
+        const auto title  = line.upToFirstOccurrenceOf ("  -  ", false, false).trim();
+        const auto author = line.fromLastOccurrenceOf ("  -  ", false, false).trim();
+
+        // Long titles are shortened with "..." on screen, so match the stem.
+        const auto stem = title.upToFirstOccurrenceOf ("...", false, false).trim();
+
+        check (creditsText.contains (stem), "CREDITS.txt lists: " + stem);
+        check (creditsText.contains (author), "CREDITS.txt names the author: " + author);
+        ++checked;
+    }
+
+    check (checked == 9, "all nine CC BY credits were compared",
+           juce::String (checked) + " compared");
+
+    // The two NonCommercial recordings were removed. If either name comes back
+    // into the shipping library, it comes back with a licence problem attached.
+    for (const auto* gone : { "Pedreira", "NonCommercial-only" })
+        check (! headerText.contains (gone),
+               juce::String ("the About screen does not credit ") + gone);
+}
+
 int main()
 {
     std::cout << "Nebula Tide v2 checks" << std::endl;
@@ -674,6 +733,7 @@ int main()
     testDensity();
     testUserContent();
     testLicensing();
+    testCredits();
     std::cout << "\n" << (failures == 0 ? "ALL PASSED" : juce::String (failures) + " FAILED").toStdString()
               << std::endl;
     return failures == 0 ? 0 : 1;

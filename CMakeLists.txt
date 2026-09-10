@@ -152,6 +152,7 @@ juce_add_console_app(NebulaTest PRODUCT_NAME "NebulaTest")
 target_sources(NebulaTest PRIVATE tools/test/main.cpp)
 target_compile_definitions(NebulaTest PRIVATE
     JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0
+    NEBULA_REPO_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
 )
 if(WIN32)
     target_link_libraries(NebulaTest PRIVATE bcrypt crypt32)

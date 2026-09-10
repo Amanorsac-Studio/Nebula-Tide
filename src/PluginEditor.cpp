@@ -1126,9 +1126,13 @@ void SettingsPanel::resized()
         locateBtn.setBounds (r.removeFromLeft (150).reduced (0, 2));
         r.removeFromLeft (8);
         resetLocationBtn.setBounds (r.removeFromLeft (120).reduced (0, 2));
+        r.removeFromLeft (8);
+        aboutBtn.setBounds (r.removeFromLeft (90).reduced (0, 2));
     }
     manualBtn.setBounds (area.removeFromTop (24));
     area.removeFromTop (4);
+
+    aboutView.setBounds (getLocalBounds().reduced (18, 14));
 
     viewport.setBounds (area);
     const int rowH = 28;

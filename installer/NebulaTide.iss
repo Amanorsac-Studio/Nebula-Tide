@@ -68,7 +68,9 @@ var
 begin
   if CurStep = ssPostInstall then
   begin
-    PointerDir := ExpandConstant('{userappdata}\Nebula Tide');
+    // Documents\Amanorsac Studio\<Product>\ — the same place productDataDir()
+    // in PluginProcessor.cpp looks. If one moves, the other moves with it.
+    PointerDir := ExpandConstant('{userdocs}\Amanorsac Studio\Nebula Tide');
     ForceDirectories(PointerDir);
     SaveStringToFile(PointerDir + '\library-path.txt', SoundsPage.Values[0], False);
   end;

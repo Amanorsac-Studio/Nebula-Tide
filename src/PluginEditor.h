@@ -3,6 +3,7 @@
 #include "MidiDrag.h"
 #include "PresetStudio.h"
 #include "ActivationView.h"
+#include "AboutView.h"
 #include <juce_opengl/juce_opengl.h>
 
 // Defined in PluginEditor.cpp; declared here so components written inline in
@@ -395,6 +396,10 @@ public:
         addAndMakeVisible (resetLocationBtn);
         refreshLibraryPath();
 
+        aboutBtn.onClick = [this] { aboutView.setVisible (true); aboutView.toFront (true); };
+        addAndMakeVisible (aboutBtn);
+        addChildComponent (aboutView);
+
         startTimerHz (10);
     }
 
@@ -410,6 +415,12 @@ public:
     juce::Label soundsHeading, soundsPath;
     juce::TextButton locateBtn { "CHOOSE FOLDER..." }, resetLocationBtn { "USE DEFAULT" };
     std::unique_ptr<juce::FileChooser> folderChooser;
+
+    // Version, credits and the legal links. Overlays the settings panel rather
+    // than opening a window, so it behaves the same inside a plugin host, where
+    // a second top-level window is at the mercy of the host.
+    juce::TextButton aboutBtn { "ABOUT" };
+    AboutView aboutView;
     void chooseLibraryFolder();
     void refreshLibraryPath();
     juce::ToggleButton gateBtn { "MIDI notes gate the pad (note off = fade out, like a sampler)" };
