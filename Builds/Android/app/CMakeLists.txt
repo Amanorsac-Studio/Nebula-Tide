@@ -40,6 +40,8 @@ add_library( ${BINARY_NAME}
     "../../../src/PluginProcessor.h"
     "../../../src/PluginEditor.cpp"
     "../../../src/PluginEditor.h"
+    "../../../src/PresetStudio.cpp"
+    "../../../src/PresetStudio.h"
     "../../../src/NtLibrary.h"
     "../../../assets/logo.png"
     "../../../build/_deps/juce-src/modules/juce_audio_basics/audio_play_head/juce_AudioPlayHead.cpp"

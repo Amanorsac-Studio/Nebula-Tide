@@ -142,7 +142,24 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
         run: |
-          echo "$MAC_CERT_P12" | base64 -d > cert.p12
+          # Check the secrets before using them. Without this the only symptom
+          # is "base64: stdin: error decoding base64 input stream", which says
+          # nothing about which secret is wrong or what a right one looks like.
+          fail=0
+          clean=$(printf '%s' "$MAC_CERT_P12" | tr -d '[:space:]')
+          if ! printf '%s' "$clean" | base64 -d > cert.p12 2>/dev/null; then
+            echo "::error::MAC_CERT_P12 is not valid base64 (${#clean} characters after whitespace was stripped). It should be the output of: base64 -i developerID_xxx.p12"
+            fail=1
+          elif [ "$(wc -c < cert.p12)" -lt 1000 ]; then
+            echo "::error::MAC_CERT_P12 decodes to only $(wc -c < cert.p12) bytes. A Developer ID certificate is a few kilobytes, so this is probably not the .p12 file."
+            fail=1
+          fi
+          [ -n "$MAC_CERT_PASSWORD" ] || { echo "::error::MAC_CERT_PASSWORD is empty. It is the password set when the .p12 was exported from Keychain Access."; fail=1; }
+          [ -n "$APPLE_ID" ]          || { echo "::error::APPLE_ID is empty. Notarization needs the Apple ID email for the developer account."; fail=1; }
+          [ -n "$APPLE_TEAM_ID" ]     || { echo "::error::APPLE_TEAM_ID is empty. It is the ten-character team identifier."; fail=1; }
+          [ -n "$APPLE_APP_PASSWORD" ] || { echo "::error::APPLE_APP_PASSWORD is empty. It is an app-specific password from appleid.apple.com, not the account password."; fail=1; }
+          [ "$fail" = 0 ] || exit 1
+
           security create-keychain -p ci ci.keychain
           security default-keychain -s ci.keychain
           security unlock-keychain -p ci ci.keychain
