@@ -69,3 +69,8 @@ The remaining pads, textures and effects are original material created for
 Nebula Tide.
 
 Nebula Tide and its sound library are © Amanorsac Studio.
+
+---
+Note: two recordings previously in the library were released under Creative
+Commons Attribution-NonCommercial and have been removed, since that licence
+does not permit use in a commercial product. They are not part of Nebula Tide.
