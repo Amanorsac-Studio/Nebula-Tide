@@ -1,6 +1,17 @@
 #pragma once
 #include "PluginProcessor.h"
+#include "MidiDrag.h"
+#include "PresetStudio.h"
+#include "ActivationView.h"
 #include <juce_opengl/juce_opengl.h>
+
+// Defined in PluginEditor.cpp; declared here so components written inline in
+// this header can use the theme colours too.
+namespace colours
+{
+    extern const juce::Colour bgDeep, foam, textDim;
+    extern juce::Colour bgMid, sea, seaBright;
+}
 
 //==============================================================================
 // HD rendering helpers: true Gaussian bloom (cached sprite, cheap to draw) and
@@ -319,13 +330,106 @@ public:
         blendSlider.setValue (gLoopBlendSeconds.load(), juce::dontSendNotification);
         blendSlider.onValueChange = [this] { gLoopBlendSeconds.store ((float) blendSlider.getValue()); };
         addAndMakeVisible (blendSlider);
+
+        // ── v2 shimmer shaping ──
+        auto smallCaps = [this] (juce::Label& l, const juce::String& text)
+        {
+            l.setText (text, juce::dontSendNotification);
+            l.setFont (juce::Font (juce::FontOptions (10.0f)).withExtraKerningFactor (0.3f));
+            addAndMakeVisible (l);
+        };
+        smallCaps (shimHeading, "SHIMMER");
+        smallCaps (bloomLabel,  "BLOOM");
+        smallCaps (toneLabel,   "TONE");
+        smallCaps (sizeLabel,   "SIZE");
+        smallCaps (pitchLabel,  "PITCH");
+        smallCaps (densityLabel,"DENSITY");
+
+        for (auto* s : { &bloomSlider, &toneSlider, &sizeSlider, &densitySlider })
+        {
+            s->setSliderStyle (juce::Slider::LinearHorizontal);
+            s->setTextBoxStyle (juce::Slider::NoTextBox, true, 0, 0);
+            addAndMakeVisible (*s);
+        }
+        bloomAtt = std::make_unique<SlAtt> (processor.apvts, "shimbloom", bloomSlider);
+        toneAtt  = std::make_unique<SlAtt> (processor.apvts, "shimtone",  toneSlider);
+        sizeAtt  = std::make_unique<SlAtt> (processor.apvts, "shimsize",  sizeSlider);
+        densityAtt = std::make_unique<SlAtt> (processor.apvts, "shimdensity", densitySlider);
+
+        pitchBox.addItemList ({ "Octave", "Fifth", "Octave + Fifth", "High", "Sub + Octave" }, 1);
+        addAndMakeVisible (pitchBox);
+        pitchAtt = std::make_unique<CbAtt> (processor.apvts, "shimpitch", pitchBox);
+        addAndMakeVisible (manualBtn);
+
+        manualAtt = std::make_unique<BtAtt> (processor.apvts, "shimmanual", manualBtn);
+
+
+        smallCaps (licenseHeading, "LICENSE");
+        licenseStatus.setFont (ui::bodyFont (10.5f));
+        licenseStatus.setColour (juce::Label::textColourId, colours::textDim);
+        addAndMakeVisible (licenseStatus);
+        deactivateBtn.onClick = [this]
+        {
+            deactivateBtn.setEnabled (false);
+            processor.license.deactivateThisDevice ([this] (amanorsacstudio::LicenseResult r)
+            {
+                deactivateBtn.setEnabled (true);
+                licenseStatus.setText (r.ok ? "Deactivated. Reopen to enter a key."
+                                            : r.message, juce::dontSendNotification);
+            });
+        };
+        addAndMakeVisible (deactivateBtn);
+
+        smallCaps (soundsHeading, "SOUND LIBRARY");
+        soundsPath.setFont (ui::bodyFont (10.5f));
+        soundsPath.setColour (juce::Label::textColourId, colours::textDim);
+        addAndMakeVisible (soundsPath);
+        locateBtn.onClick = [this] { chooseLibraryFolder(); };
+        resetLocationBtn.onClick = [this]
+        {
+            NebulaTideProcessor::setUserChosenLibraryDir ({});
+            processor.reloadLibrary();
+            refreshLibraryPath();
+        };
+        addAndMakeVisible (locateBtn);
+        addAndMakeVisible (resetLocationBtn);
+        refreshLibraryPath();
+
         startTimerHz (10);
     }
 
     juce::TextButton devicesBtn;   // wired by the editor (standalone only)
+    // Buyers move machines; without this they have to email support to free
+    // a seat (standard R10).
+    juce::Label licenseHeading, licenseStatus;
+    juce::TextButton deactivateBtn { "DEACTIVATE THIS DEVICE" };
+
+    // Where the sounds are. Shown always, not just when something is broken,
+    // so people can move the library to another drive on purpose rather than
+    // only discovering the setting exists after an install has gone wrong.
+    juce::Label soundsHeading, soundsPath;
+    juce::TextButton locateBtn { "CHOOSE FOLDER..." }, resetLocationBtn { "USE DEFAULT" };
+    std::unique_ptr<juce::FileChooser> folderChooser;
+    void chooseLibraryFolder();
+    void refreshLibraryPath();
     juce::ToggleButton gateBtn { "MIDI notes gate the pad (note off = fade out, like a sampler)" };
     juce::Label blendLabel;        // loop crossfade length (pads, FX, textures)
     juce::Slider blendSlider;
+
+    // v2 — the shimmer's shaping controls; the amount itself lives on the main
+    // panel, since that is the one you reach for while playing.
+    juce::Label shimHeading, bloomLabel, toneLabel, sizeLabel, pitchLabel, densityLabel;
+    juce::Slider bloomSlider, toneSlider, sizeSlider, densitySlider;
+    juce::ComboBox pitchBox;
+    // MANUAL frees the four destinations from the macro curve, the way turning
+    // an assign off on a Montage hands the parameter back to you.
+    juce::ToggleButton manualBtn { "MANUAL - set shimmer controls by hand instead of following the knob" };
+    using SlAtt = juce::AudioProcessorValueTreeState::SliderAttachment;
+    using CbAtt = juce::AudioProcessorValueTreeState::ComboBoxAttachment;
+    std::unique_ptr<SlAtt> bloomAtt, toneAtt, sizeAtt, densityAtt;
+    std::unique_ptr<CbAtt> pitchAtt;
+    using BtAtt = juce::AudioProcessorValueTreeState::ButtonAttachment;
+    std::unique_ptr<BtAtt> manualAtt;
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -339,6 +443,63 @@ private:
     juce::OwnedArray<Row> rows;
     juce::Viewport viewport;
     juce::Component rowsHolder;
+};
+
+//==============================================================================
+// Drag this onto a DAW track and you get a MIDI clip that plays the instrument
+// back exactly as it stands — current key, plus whichever FX and texture are
+// running. Stylus RMX works the same way, and for the same reason: once the
+// part is in the timeline you can edit it like any other MIDI.
+class MidiDragHandle : public juce::Component
+{
+public:
+    explicit MidiDragHandle (NebulaTideProcessor& p) : processor (p)
+    {
+        setMouseCursor (juce::MouseCursor::DraggingHandCursor);
+        setTooltip ("Drag to a DAW track to create a MIDI clip");
+    }
+
+    void paint (juce::Graphics&) override;
+
+    void mouseDown (const juce::MouseEvent&) override { armed = true; repaint(); }
+    void mouseUp (const juce::MouseEvent&) override   { armed = false; repaint(); }
+
+    void mouseDrag (const juce::MouseEvent& e) override
+    {
+        if (dragging || e.getDistanceFromDragStart() < 6) return;
+        dragging = true;
+
+        mididrag::Clip clip;
+        clip.key = processor.getCurrentKey();
+        clip.bpm = processor.hostBpm.load();
+        clip.auxChannel = NebulaTideProcessor::auxMidiChannel;
+        if (processor.isAuxPlaying (0))
+            clip.fxNote = NebulaTideProcessor::fxZoneLo + processor.getAuxIndex (0);
+        if (processor.isAuxPlaying (1))
+            clip.texNote = NebulaTideProcessor::texZoneLo + processor.getAuxIndex (1);
+
+        const auto& presets = processor.getPresets();
+        const int pad = processor.getCurrentPadIndex();
+        if (pad >= 0 && pad < presets.size())
+            clip.name = presets.getReference (pad).name;
+
+        mididrag::startDrag (this, clip);
+        dragging = false;
+        armed = false;
+        repaint();
+    }
+
+    void setTooltip (const juce::String& t) { tip = t; }
+    juce::String getTooltip() const { return tip; }
+
+    // Shows the preset name, so it reads as the thing itself rather than as a
+    // button labelled with a file format. Nothing announces it — you find it.
+    void setLabel (const juce::String& t) { if (t != label) { label = t; repaint(); } }
+
+private:
+    NebulaTideProcessor& processor;
+    juce::String tip, label;
+    bool armed = false, dragging = false;
 };
 
 //==============================================================================
@@ -377,19 +538,28 @@ private:
     void checkForUpdate();
 
     juce::TextButton settingsBtn { "SETTINGS" };
+    juce::TextButton studioBtn { "STUDIO" };   // the preset dashboard
     juce::TextButton keysBtn { "KEYS" };       // show/hide the zoned keyboard strip
     SettingsPanel settingsPanel { processor };
+    std::unique_ptr<PresetStudio> studio;
+    // Covers the whole window until a proof has verified. Removed, not hidden,
+    // the instant isLicensed() turns true.
+    std::unique_ptr<ActivationView> activation;
+    void showMainViewIfLicensed();
     std::unique_ptr<LibraryDownloader> downloader;   // only while the library is missing
     juce::OwnedArray<PadButton> pads;
 
     juce::Slider volumeKnob, panKnob, fadeSlider;
-    juce::Slider rMixSlider, rSizeSlider, rDampSlider;
+    juce::Slider rMixSlider, rSizeSlider, rDampSlider, shimSlider;
     juce::Label volumeLabel, panLabel, fadeLabel;
-    juce::Label rMixLabel, rSizeLabel, rDampLabel, reverbTitle;
+    juce::Label rMixLabel, rSizeLabel, rDampLabel, shimLabel, reverbTitle;
     juce::TextButton roomBtn { "ROOM" }, plateBtn { "PLATE" }, hallBtn { "HALL" };
 
+    // v2
+    MidiDragHandle midiDrag { processor };     // drag a MIDI clip to the timeline
+
     using Attachment = juce::AudioProcessorValueTreeState::SliderAttachment;
-    std::unique_ptr<Attachment> volumeAtt, panAtt, fadeAtt, rMixAtt, rSizeAtt, rDampAtt;
+    std::unique_ptr<Attachment> volumeAtt, panAtt, fadeAtt, rMixAtt, rSizeAtt, rDampAtt, shimAtt;
 
     juce::OwnedArray<MidiLearnListener> learnListeners;
 

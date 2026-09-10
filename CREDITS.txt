@@ -1,0 +1,71 @@
+NEBULA TIDE — SOUND CREDITS
+===========================
+
+Some of the texture and FX recordings in Nebula Tide come from Freesound.
+Those released under the Creative Commons Attribution 4.0 licence may be
+edited and included in a commercial product, provided the original creator is
+credited and the fact that the recording was changed is stated. Both are done
+below.
+
+Every recording listed here has been edited for use in Nebula Tide — trimmed,
+looped, level-matched and processed — so none is the original file as
+published on Freesound.
+
+
+CREATIVE COMMONS ATTRIBUTION 4.0
+--------------------------------
+https://creativecommons.org/licenses/by/4.0/
+
+  "applause in medium hall 1118 AM 250223_1003"
+      by klankbeeld — https://freesound.org/people/klankbeeld/
+
+  "Clapping"
+      by freekit — https://freesound.org/people/freekit/
+
+  "LAYERS 004 - 2 Phase Space Explorer G6"
+      by Jovica — https://freesound.org/people/Jovica/
+
+  "stream flowing through a park"
+      by motivecap — https://freesound.org/people/motivecap/
+
+  "Water stream 5"
+      by Kolezan — https://freesound.org/people/Kolezan/
+
+  "Stream6"
+      by sonicport — https://freesound.org/people/sonicport/
+
+  "summer forest NL EU 12.06 PM 220617_0405"
+      by klankbeeld — https://freesound.org/people/klankbeeld/
+
+  "birds small stream Bollertsbaach forest Parc Hosingen Luxembourg
+   1206 pm 260516_1195"
+      by klankbeeld — https://freesound.org/people/klankbeeld/
+      https://freesound.org/people/klankbeeld/sounds/854910/
+
+  "ForestFamrfield 816 AM NL EU 220515_0345"
+      by klankbeeld — https://freesound.org/people/klankbeeld/
+
+All of the above were changed for use in this product.
+
+
+CREATIVE COMMONS ZERO
+---------------------
+https://creativecommons.org/publicdomain/zero/1.0/
+
+These are released into the public domain and carry no attribution
+requirement. They are listed only so this document is a complete account of
+what is in the library.
+
+  "stream2" by gluckose
+  "FIELD_LA Rain_Park_Water in gutter_01" by WilliamJMeyer
+  "heavy_rain_210511_0081" by titi2
+  "sfx_amb_forest_spring_afternoon-01" by bajko
+  "Medium Crowd Clapping 5" by jentlemen
+  "26.07.12- Applause - Crowd Clapping in a Cathedral" by Valerie-Vivegnis
+
+
+---
+The remaining pads, textures and effects are original material created for
+Nebula Tide.
+
+Nebula Tide and its sound library are © Amanorsac Studio.

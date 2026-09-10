@@ -1,12 +1,12 @@
 ; Nebula Tide — Inno Setup installer script
 ; Build (from project root):
-;   ISCC.exe /DAppVersion=1.0.0-beta1 installer\NebulaTide.iss
+;   ISCC.exe /DAppVersion=2.0.0 installer\NebulaTide.iss
 
 #ifndef AppVersion
-  #define AppVersion "1.0.0"
+  #define AppVersion "2.0.0"
 #endif
 #define AppName "Nebula Tide"
-#define AppPublisher "Nebula Tide"
+#define AppPublisher "Amanorsac Studio"
 #define BuildDir "..\build\NebulaTide_artefacts\Release"
 
 [Setup]
@@ -19,25 +19,74 @@ DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
 OutputBaseFilename=NebulaTide-{#AppVersion}-Setup
 OutputDir=output
-SetupIconFile=..\build\NebulaTide_artefacts\JuceLibraryCode\icon.ico
-UninstallDisplayIcon={app}\Nebula Tide.exe
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
 ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=admin
+SetupIconFile=..\build\NebulaTide_artefacts\JuceLibraryCode\icon.ico
+UninstallDisplayIcon={app}\Nebula Tide.exe
 
 [Tasks]
 Name: "vst3"; Description: "Install VST3 plugin (for DAWs such as Ableton, Cubase, Reaper, FL Studio)"; GroupDescription: "Components:"
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Shortcuts:"
 
+; ─────────────────────────────────────────────────────────────────────────
+;  The sound library is 264 MB and people should be able to see where it is
+;  going and put it somewhere else — a second drive, or off the system disk.
+;  It also gives anyone whose install goes wrong a path to point the app at
+;  afterwards, instead of a blank screen with nowhere to go.
+; ─────────────────────────────────────────────────────────────────────────
+[Code]
+var
+  SoundsPage: TInputDirWizardPage;
+
+procedure InitializeWizard;
+begin
+  SoundsPage := CreateInputDirPage(wpSelectComponents,
+    'Sound Library Location',
+    'Where should the Nebula Tide sounds be installed?',
+    'The sound library is about 264 MB. It is shared by the app and the plugin,' + #13#10 +
+    'so both read it from the same place.' + #13#10 + #13#10 +
+    'You can change this later in the app under SETTINGS, and the app can be' + #13#10 +
+    'pointed at this folder again if anything goes wrong.',
+    False, '');
+  SoundsPage.Add('');
+  SoundsPage.Values[0] := ExpandConstant('{commonappdata}\Nebula Tide');
+end;
+
+function SoundsDir(Param: String): String;
+begin
+  Result := SoundsPage.Values[0];
+end;
+
+// Written so the app finds the library wherever it was put, without the user
+// having to go and locate it by hand on first launch.
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  PointerDir: String;
+begin
+  if CurStep = ssPostInstall then
+  begin
+    PointerDir := ExpandConstant('{userappdata}\Nebula Tide');
+    ForceDirectories(PointerDir);
+    SaveStringToFile(PointerDir + '\library-path.txt', SoundsPage.Values[0], False);
+  end;
+end;
+
 [Files]
 ; standalone app
 Source: "{#BuildDir}\Standalone\Nebula Tide.exe"; DestDir: "{app}"; Flags: ignoreversion
-; The encrypted sound container, shared by the app and the VST3
-; — C:\ProgramData\Nebula Tide\NebulaTide.ntlib
+
+; the encrypted sound container, into the folder chosen on the Sound Library page
 #if FileExists("..\NebulaTide.ntlib")
-Source: "..\NebulaTide.ntlib"; DestDir: "{commonappdata}\Nebula Tide"; Flags: ignoreversion
+Source: "..\NebulaTide.ntlib"; DestDir: "{code:SoundsDir}"; Flags: ignoreversion
+#endif
+
+; attribution for the Creative Commons material in the library (CC-BY requires
+; the credit to travel with the work, so it ships beside the app)
+#if FileExists("..\CREDITS.txt")
+Source: "..\CREDITS.txt"; DestDir: "{app}"; Flags: ignoreversion
 #endif
 
 ; VST3 into the system VST3 folder

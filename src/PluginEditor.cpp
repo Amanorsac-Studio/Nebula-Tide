@@ -4,9 +4,11 @@
 
 namespace colours
 {
-    const juce::Colour bgDeep     { 0xff020c16 };
-    const juce::Colour foam       { 0xffbdf3ff };
-    const juce::Colour textDim    { 0xff6fa8bd };
+    // extern, because a namespace-scope const is internal by default and
+    // PresetStudio.cpp needs to link against these same objects.
+    extern const juce::Colour bgDeep  { 0xff020c16 };
+    extern const juce::Colour foam    { 0xffbdf3ff };
+    extern const juce::Colour textDim { 0xff6fa8bd };
 
     // theme accents — retinted live to the current preset's colour
     juce::Colour bgMid      { 0xff04283f };
@@ -527,6 +529,7 @@ NebulaTideEditor::NebulaTideEditor (NebulaTideProcessor& p)
     addChildComponent (updateBtn);
     checkForUpdate();
 
+    showMainViewIfLicensed();
     keysBtn.setColour (juce::TextButton::textColourOffId, colours::textDim);
     keysBtn.onClick = [this]
     {
@@ -588,6 +591,7 @@ NebulaTideEditor::NebulaTideEditor (NebulaTideProcessor& p)
 
     setupKnob (volumeKnob, volumeLabel, "VOLUME", "volume");
     setupKnob (panKnob, panLabel, "PAN", "pan");
+    setupKnob (shimSlider, shimLabel, "SHIMMER", "shim");
     setupSlider (fadeSlider, fadeLabel, "CROSSFADE");
     setupSlider (rMixSlider, rMixLabel, "MIX");
     setupSlider (rSizeSlider, rSizeLabel, "SIZE");
@@ -608,10 +612,28 @@ NebulaTideEditor::NebulaTideEditor (NebulaTideProcessor& p)
     rMixAtt   = std::make_unique<Attachment> (processor.apvts, "rmix", rMixSlider);
     rSizeAtt  = std::make_unique<Attachment> (processor.apvts, "rsize", rSizeSlider);
     rDampAtt  = std::make_unique<Attachment> (processor.apvts, "rdamp", rDampSlider);
+    shimAtt   = std::make_unique<Attachment> (processor.apvts, "shim", shimSlider);
+
+    // Dragging a clip only makes sense where there is a timeline to drop it on.
+    addChildComponent (midiDrag);
+    midiDrag.setVisible (! juce::JUCEApplicationBase::isStandaloneApp());
 
     settingsBtn.setColour (juce::TextButton::textColourOffId, colours::textDim);
     settingsBtn.onClick = [this] { settingsPanel.setVisible (! settingsPanel.isVisible()); };
     addAndMakeVisible (settingsBtn);
+
+    // Forge, brought inside the app. Rebuilding the pad list afterwards is
+    // what makes a newly saved preset appear without a restart.
+    studio = std::make_unique<PresetStudio> (processor, [this]
+    {
+        rebuildPads();
+        resized();
+    });
+    addChildComponent (*studio);
+    studio->setVisible (false);      // opens only from the STUDIO button
+    studioBtn.setColour (juce::TextButton::textColourOffId, colours::textDim);
+    studioBtn.onClick = [this] { studio->setVisible (! studio->isVisible()); };
+    addAndMakeVisible (studioBtn);
     addChildComponent (settingsPanel);   // hidden until toggled
 
     // one settings entry point: fold the standalone's stock "Options" button
@@ -650,11 +672,24 @@ NebulaTideEditor::NebulaTideEditor (NebulaTideProcessor& p)
     attachLearn (rMixSlider, 2);
     attachLearn (rSizeSlider, 3);
     attachLearn (rDampSlider, 4);
+    attachLearn (shimSlider, 34);
     attachLearn (fadeSlider, 5);
     attachLearn (fxStar, 6);
     attachLearn (texStar, 7);
     attachLearn (nextBtn, 9);      // next preset
     attachLearn (prevBtn, 10);     // previous preset
+
+    // Nothing of the instrument is reachable until a proof has verified.
+    // Built at construction, so the gate is up before the first paint.
+   #if NEBULA_REQUIRE_LICENSE
+    if (! processor.license.isLicensed())
+    {
+        activation = std::make_unique<ActivationView> (processor.license,
+                                                       [this] { showMainViewIfLicensed(); });
+        addAndMakeVisible (*activation);
+        activation->toFront (true);
+    }
+   #endif
 
     rebuildPads();
 
@@ -1007,6 +1042,53 @@ void SettingsPanel::paint (juce::Graphics& g)
         info, juce::Justification::topLeft, 4);
 }
 
+void SettingsPanel::refreshLibraryPath()
+{
+    const auto lib = NebulaTideProcessor::currentLibraryFile();
+    const auto pick = NebulaTideProcessor::userChosenLibraryDir();
+
+    if (lib != juce::File())
+        soundsPath.setText (lib.getFullPathName()
+                              + (pick != juce::File() ? "   (chosen)" : "   (default)"),
+                            juce::dontSendNotification);
+    else
+        soundsPath.setText ("No sound library found - choose the folder containing NebulaTide.ntlib",
+                            juce::dontSendNotification);
+
+    soundsPath.setColour (juce::Label::textColourId,
+                          lib != juce::File() ? colours::textDim : juce::Colour (0xffff5a6e));
+    resetLocationBtn.setEnabled (pick != juce::File());
+}
+
+void SettingsPanel::chooseLibraryFolder()
+{
+    folderChooser = std::make_unique<juce::FileChooser> (
+        "Where is your Nebula Tide sound library?",
+        NebulaTideProcessor::defaultLibraryDir(), juce::String());
+
+    folderChooser->launchAsync (juce::FileBrowserComponent::openMode
+                                  | juce::FileBrowserComponent::canSelectDirectories,
+        [this] (const juce::FileChooser& fc)
+        {
+            const auto dir = fc.getResult();
+            if (! dir.isDirectory()) return;
+
+            // Say so plainly rather than accepting a folder and failing later
+            // with the same blank screen this setting exists to cure.
+            if (dir.findChildFiles (juce::File::findFiles, false, "*.ntlib").isEmpty())
+            {
+                soundsPath.setText ("No .ntlib file in " + dir.getFullPathName(),
+                                    juce::dontSendNotification);
+                soundsPath.setColour (juce::Label::textColourId, juce::Colour (0xffff5a6e));
+                return;
+            }
+
+            NebulaTideProcessor::setUserChosenLibraryDir (dir);
+            processor.reloadLibrary();
+            refreshLibraryPath();
+        });
+}
+
 void SettingsPanel::resized()
 {
     auto area = getLocalBounds().reduced (26, 12);
@@ -1017,6 +1099,35 @@ void SettingsPanel::resized()
     auto blendRow = area.removeFromTop (26);
     blendLabel.setBounds (blendRow.removeFromLeft (96));
     blendSlider.setBounds (blendRow.reduced (4, 2));
+
+    // v2 block: shimmer shaping, then chord-follow settle time
+    auto labelledRow = [&area] (juce::Label& l, juce::Component& c)
+    {
+        auto r = area.removeFromTop (24);
+        l.setBounds (r.removeFromLeft (96));
+        c.setBounds (r.reduced (4, 2));
+    };
+    area.removeFromTop (6);
+    shimHeading.setBounds (area.removeFromTop (16));
+    labelledRow (bloomLabel, bloomSlider);
+    labelledRow (toneLabel,  toneSlider);
+    labelledRow (sizeLabel,  sizeSlider);
+    labelledRow (densityLabel, densitySlider);
+    labelledRow (pitchLabel, pitchBox);
+    area.removeFromTop (10);
+    licenseHeading.setBounds (area.removeFromTop (16));
+    licenseStatus.setBounds (area.removeFromTop (18));
+    deactivateBtn.setBounds (area.removeFromTop (26).removeFromLeft (220).reduced (0, 2));
+    area.removeFromTop (10);
+    soundsHeading.setBounds (area.removeFromTop (16));
+    soundsPath.setBounds (area.removeFromTop (18));
+    {
+        auto r = area.removeFromTop (26);
+        locateBtn.setBounds (r.removeFromLeft (150).reduced (0, 2));
+        r.removeFromLeft (8);
+        resetLocationBtn.setBounds (r.removeFromLeft (120).reduced (0, 2));
+    }
+    manualBtn.setBounds (area.removeFromTop (24));
     area.removeFromTop (4);
 
     viewport.setBounds (area);
@@ -1035,6 +1146,11 @@ void SettingsPanel::resized()
 
 void SettingsPanel::timerCallback()
 {
+    licenseStatus.setText (processor.license.isLicensed()
+                             ? "Licensed on this device."
+                             : "Not activated.", juce::dontSendNotification);
+    deactivateBtn.setEnabled (processor.license.isLicensed());
+
     const int learning = processor.learningAction();
     for (int i = 0; i < rows.size(); ++i)
     {
@@ -1148,6 +1264,14 @@ void NebulaTideEditor::timerCallback()
     updateReverbButtons();
     keysBtn.setColour (juce::TextButton::textColourOffId,
                        zoneKeyboard.isVisible() ? colours::seaBright : colours::textDim);
+
+    if (midiDrag.isVisible())
+    {
+        const auto& presets = processor.getPresets();
+        const int pad = juce::jlimit (0, juce::jmax (0, presets.size() - 1), viewIndex);
+        if (! presets.isEmpty())
+            midiDrag.setLabel (presets.getReference (pad).name);
+    }
 }
 
 void NebulaTideEditor::paint (juce::Graphics& g)
@@ -1190,9 +1314,25 @@ void NebulaTideEditor::paint (juce::Graphics& g)
     }
 }
 
+// Called both when a cached proof loads at startup and when someone types a
+// key - the same path, so activation can never leave them at the gate (A3).
+void NebulaTideEditor::showMainViewIfLicensed()
+{
+    if (! processor.license.isLicensed() || activation == nullptr)
+        return;
+    activation.reset();
+    resized();
+    repaint();
+}
+
 void NebulaTideEditor::resized()
 {
     background.setBounds (getLocalBounds());
+    if (activation != nullptr)
+    {
+        activation->setBounds (getLocalBounds());
+        activation->toFront (false);
+    }
     auto area = getLocalBounds();
 
     // header
@@ -1201,6 +1341,13 @@ void NebulaTideEditor::resized()
     settingsBtn.setBounds (header.removeFromRight (86));
     header.removeFromRight (6);
     keysBtn.setBounds (header.removeFromRight (62));
+    header.removeFromRight (6);
+    studioBtn.setBounds (header.removeFromRight (74));
+    if (midiDrag.isVisible())
+    {
+        header.removeFromRight (6);
+        midiDrag.setBounds (header.removeFromRight (96).withSizeKeepingCentre (96, 26));
+    }
     if (updateBtn.isVisible())
     {
         header.removeFromRight (6);
@@ -1211,6 +1358,12 @@ void NebulaTideEditor::resized()
     settingsPanel.setBounds (getLocalBounds().withSizeKeepingCentre (
         juce::jmin (620, getWidth() - 80), juce::jmin (620, getHeight() - 100)));
     settingsPanel.toFront (false);
+    if (studio != nullptr)
+    {
+        studio->setBounds (getLocalBounds().withSizeKeepingCentre (
+            juce::jmin (940, getWidth() - 40), juce::jmin (660, getHeight() - 40)));
+        studio->toFront (false);
+    }
     if (downloader != nullptr)
     {
         downloader->setBounds (getLocalBounds());
@@ -1243,9 +1396,10 @@ void NebulaTideEditor::resized()
     plateBtn.setBounds (typeRow.removeFromLeft (bw).reduced (4, 0));
     hallBtn.setBounds (typeRow.reduced (4, 0));
 
+    int rowsLeft = 3;      // MIX · SIZE · DAMP
     auto sliderRow = [&] (juce::Slider& s, juce::Label& l)
     {
-        auto r = reverbArea.removeFromTop (juce::jmax (20, reverbArea.getHeight() / 3));
+        auto r = reverbArea.removeFromTop (juce::jmax (18, reverbArea.getHeight() / rowsLeft--));
         l.setBounds (r.removeFromLeft (44));
         s.setBounds (r);
     };
@@ -1261,7 +1415,16 @@ void NebulaTideEditor::resized()
     // Kontakt-style zoned keyboard strip (when shown), then the key planets ribbon
     if (zoneKeyboard.isVisible())
         zoneKeyboard.setBounds (area.removeFromBottom (74).reduced (30, 0).withTrimmedBottom (6));
-    keyPlanets.setBounds (area.removeFromBottom (zoneKeyboard.isVisible() ? 100 : 110).reduced (30, 0));
+    // SHIMMER sits beside the keys as a single macro knob — one sweep takes
+    // the whole effect from silent to cascading, so it wants presence rather
+    // than a slider buried among the reverb trims.
+    {
+        auto keyRow = area.removeFromBottom (zoneKeyboard.isVisible() ? 100 : 110).reduced (30, 0);
+        auto shimArea = keyRow.removeFromRight (112);
+        shimLabel.setBounds (shimArea.removeFromBottom (16));
+        shimSlider.setBounds (shimArea.withSizeKeepingCentre (86, 86));
+        keyPlanets.setBounds (keyRow);
+    }
 
     // FX star (left) and texture star (right) flank the pad grid, sitting
     // slightly above centre
@@ -1282,4 +1445,37 @@ void NebulaTideEditor::resized()
         for (auto* pad : pads)
             pad->setBounds (centre);
     }
+}
+
+//==============================================================================
+// The drag handle: a quiet glass chip carrying the preset's own name. Nothing
+// labels it as MIDI and nothing points at it — it is meant to be found rather
+// than advertised, so it never competes with the controls you use constantly.
+void MidiDragHandle::paint (juce::Graphics& g)
+{
+    auto r = getLocalBounds().toFloat().reduced (1.0f);
+    const auto tint = armed ? colours::seaBright : colours::textDim;
+
+    if (armed)
+        ui::drawBloom (g, r.getCentre(), r.getWidth() * 0.6f, colours::seaBright, 0.45f);
+
+    g.setColour (colours::bgMid.withAlpha (armed ? 0.8f : 0.42f));
+    g.fillRoundedRectangle (r, 6.0f);
+    g.setColour (tint.withAlpha (armed ? 0.85f : 0.30f));
+    g.drawRoundedRectangle (r, 6.0f, 1.0f);
+
+    // a small grab texture on each side, so it reads as draggable without a word
+    auto grip = [&g, &r, tint] (float x)
+    {
+        for (int i = 0; i < 3; ++i)
+            g.fillRect (x, r.getCentreY() - 4.0f + (float) i * 4.0f, 7.0f, 1.0f);
+        juce::ignoreUnused (tint);
+    };
+    g.setColour (tint.withAlpha (armed ? 0.7f : 0.35f));
+    grip (r.getX() + 8.0f);
+    grip (r.getRight() - 15.0f);
+
+    g.setColour (tint.withAlpha (armed ? 1.0f : 0.8f));
+    g.setFont (ui::labelFont (10.0f));
+    g.drawText (label.toUpperCase(), r.reduced (20.0f, 0.0f), juce::Justification::centred, true);
 }

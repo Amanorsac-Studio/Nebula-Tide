@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(NebulaTide VERSION 1.3.0)
+project(NebulaTide VERSION 2.0.0)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -47,9 +47,15 @@ juce_add_plugin(NebulaTide
     PLIST_TO_MERGE "${CMAKE_CURRENT_SOURCE_DIR}/ios/Info-extra.plist"
 )
 
+# Whether the build demands a license key. ON ships a paid product; OFF ships
+# the same binary with the gate removed, for a free release or for testing.
+# The license client is compiled in either way - only the gate changes.
+option(NEBULA_REQUIRE_LICENSE "Require a license key to run" ON)
+
 target_sources(NebulaTide PRIVATE
     src/PluginProcessor.cpp
     src/PluginEditor.cpp
+    src/PresetStudio.cpp
 )
 
 # Optionally embed audio from /presets into the binary. Default OFF: presets
@@ -71,6 +77,10 @@ if(NEBULA_EMBED_PRESETS AND PRESET_FILES)
 else()
     target_compile_definitions(NebulaTide PRIVATE NEBULA_HAS_EMBEDDED_PRESETS=0)
 endif()
+
+# Applies to every build, embedded presets or not.
+target_compile_definitions(NebulaTide PRIVATE
+    NEBULA_REQUIRE_LICENSE=$<BOOL:${NEBULA_REQUIRE_LICENSE}>)
 
 # iOS: the encrypted sound container ships inside the app bundle (and inside the
 # AUv3 extension, so the plugin works in GarageBand/Logic too). Build it first
@@ -99,6 +109,7 @@ target_compile_definitions(NebulaTide PRIVATE
 )
 
 target_link_libraries(NebulaTide PRIVATE
+    juce::juce_cryptography
     juce::juce_audio_utils
     juce::juce_dsp
     juce::juce_opengl
@@ -132,6 +143,24 @@ target_compile_definitions(NebulaPack PRIVATE
 target_link_libraries(NebulaPack PRIVATE
     juce::juce_cryptography
     juce::juce_audio_formats
+    juce::juce_events
+    juce::juce_core
+)
+
+# ── NebulaTest: offline checks for the v2 DSP and chord logic ──
+juce_add_console_app(NebulaTest PRODUCT_NAME "NebulaTest")
+target_sources(NebulaTest PRIVATE tools/test/main.cpp)
+target_compile_definitions(NebulaTest PRIVATE
+    JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0
+)
+if(WIN32)
+    target_link_libraries(NebulaTest PRIVATE bcrypt crypt32)
+endif()
+target_link_libraries(NebulaTest PRIVATE
+    juce::juce_cryptography
+    juce::juce_audio_formats
+    juce::juce_audio_basics
+    juce::juce_gui_basics
     juce::juce_events
     juce::juce_core
 )
