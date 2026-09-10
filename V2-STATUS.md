@@ -29,6 +29,23 @@ strays — but worth confirming the A stems that shipped are the intended ones.
 
 ---
 
+## Where things live now
+
+The repo moved to `C:\Amanorsac Studio\products\nebula-tide\`, beside the other
+products. CMake bakes absolute paths into its cache, so `build/` was wiped and
+reconfigured from scratch; anything holding an old path needs the same.
+
+Runtime data is `Documents\Amanorsac Studio\Nebula Tide\` — `User\` for saved
+presets, `Library\` for user presets, `library-path.txt` for the pointer. The
+old `%APPDATA%\Nebula Tide` contents are copied across once on first run.
+Licence proofs stay in `%LOCALAPPDATA%`: they are DPAPI-encrypted and bound to
+one machine, and Documents is commonly synced to OneDrive.
+
+`NEBULA_REQUIRE_LICENSE` is currently **OFF** in the CMake cache, left as it was
+for DAW testing. It is decision 1 below and has not been made.
+
+---
+
 ## Cannot be built on this Windows machine
 
 | Target | Blocker |
