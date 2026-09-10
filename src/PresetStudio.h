@@ -57,7 +57,10 @@ public:
     }
 
     void setFile (juce::File f) { file = std::move (f); repaint(); }
-    void clear() { file = {}; if (dropped) dropped (key, {}); repaint(); }
+    // juce::File() spelled out: clang reads a bare {} here as ambiguous
+    // between the copy and move assignment operators, so this does not
+    // compile on macOS or iOS even though MSVC accepts it.
+    void clear() { file = juce::File(); if (dropped) dropped (key, {}); repaint(); }
     juce::File getFile() const { return file; }
     int getKey() const { return key; }
 

@@ -42,23 +42,36 @@ jobs:
           SOUNDS_URL: ${{ endsWith(vars.SOUNDS_URL, '.zip') && vars.SOUNDS_URL || '' }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # This repo is private, so an unauthenticated curl for a release asset
-          # comes back 404 — indistinguishable from the file not existing, which
-          # is what made every job fail the same way. gh is preinstalled on all
-          # runners and uses GITHUB_TOKEN, so it can read our own releases, and
-          # it follows the repo if it is renamed or moved to the org.
+          # The library lives on a release rather than in the repo. gh is
+          # preinstalled on every runner and uses GITHUB_TOKEN, so it can read
+          # our own releases even though this repo is private, and it addresses
+          # the repo it is running in, so it survives a rename or a move to the
+          # org. An unauthenticated curl cannot do either: it gets a 404 that
+          # looks exactly like a missing file.
+          #
+          # SOUNDS_URL is tried first when set, but it is only a preference. A
+          # stale one falls through to the release instead of failing the build
+          # — that variable outlived the repo it pointed at once already, and
+          # took every platform down with it.
+          function Test-Big { (Test-Path sounds.zip) -and (Get-Item sounds.zip).Length -gt 100MB }
           $ok = $false
-          foreach ($attempt in 1..4) {
-            if ($env:SOUNDS_URL) {
+          if ($env:SOUNDS_URL) {
+            foreach ($attempt in 1..3) {
               "Downloading $env:SOUNDS_URL (attempt $attempt)"
-              curl.exe -L --fail --retry 3 --retry-all-errors --retry-delay 5 -o sounds.zip "$env:SOUNDS_URL"
-            } else {
+              curl.exe -L --fail --retry 2 --retry-all-errors --retry-delay 5 -o sounds.zip "$env:SOUNDS_URL"
+              if ($LASTEXITCODE -eq 0 -and (Test-Big)) { $ok = $true; break }
+              Remove-Item sounds.zip -ErrorAction SilentlyContinue; Start-Sleep 5
+            }
+            if (-not $ok) { "::warning::SOUNDS_URL did not work; using this repo's own release instead" }
+          }
+          if (-not $ok) {
+            foreach ($attempt in 1..3) {
               "Downloading $env:SOUNDS_ASSET from release $env:SOUNDS_TAG (attempt $attempt)"
               gh release download $env:SOUNDS_TAG --repo $env:GITHUB_REPOSITORY `
                  --pattern $env:SOUNDS_ASSET --output sounds.zip --clobber
+              if ($LASTEXITCODE -eq 0 -and (Test-Big)) { $ok = $true; break }
+              Remove-Item sounds.zip -ErrorAction SilentlyContinue; Start-Sleep 5
             }
-            if ($LASTEXITCODE -eq 0 -and (Test-Path sounds.zip) -and (Get-Item sounds.zip).Length -gt 100MB) { $ok = $true; break }
-            Remove-Item sounds.zip -ErrorAction SilentlyContinue; Start-Sleep 8
           }
           if (-not $ok) { throw "could not download $env:SOUNDS_ASSET from release $env:SOUNDS_TAG; set the SOUNDS_URL repo variable to pull it from somewhere else" }
           $mb = [math]::Round((Get-Item sounds.zip).Length / 1MB, 1)
@@ -150,25 +163,36 @@ jobs:
           SOUNDS_URL: ${{ endsWith(vars.SOUNDS_URL, '.zip') && vars.SOUNDS_URL || '' }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # The library lives on a release rather than in the repo. gh is
+          # preinstalled on every runner and uses GITHUB_TOKEN, so it can read
+          # our own releases even though this repo is private, and it addresses
+          # the repo it is running in, so it survives a rename or a move to the
+          # org. An unauthenticated curl cannot do either: it gets a 404 that
+          # looks exactly like a missing file.
+          #
+          # SOUNDS_URL is tried first when set, but it is only a preference. A
+          # stale one falls through to the release instead of failing the build
+          # — that variable outlived the repo it pointed at once already, and
+          # took every platform down with it.
           # GitHub's CDN occasionally resets large downloads, hence the retries.
-          # This repo is private, so an unauthenticated curl for a release asset
-          # comes back 404 — indistinguishable from the file not existing, which
-          # is what made every job fail the same way. gh is preinstalled on all
-          # runners and uses GITHUB_TOKEN, so it can read our own releases, and
-          # it follows the repo if it is renamed or moved to the org.
+          big () { [ -f sounds.zip ] && [ "$(stat -f%z sounds.zip 2>/dev/null || stat -c%s sounds.zip)" -gt 100000000 ]; }
           ok=0
-          for attempt in 1 2 3 4; do
-            if [ -n "$SOUNDS_URL" ]; then
+          if [ -n "$SOUNDS_URL" ]; then
+            for attempt in 1 2 3; do
               echo "Downloading $SOUNDS_URL (attempt $attempt)"
-              curl -L --fail --retry 3 --retry-all-errors --retry-delay 5 -o sounds.zip "$SOUNDS_URL" || { rm -f sounds.zip; sleep 8; continue; }
-            else
+              curl -L --fail --retry 2 --retry-all-errors --retry-delay 5 -o sounds.zip "$SOUNDS_URL" && big && { ok=1; break; }
+              rm -f sounds.zip; sleep 5
+            done
+            [ "$ok" = 1 ] || echo "::warning::SOUNDS_URL did not work; using this repo's own release instead"
+          fi
+          if [ "$ok" != 1 ]; then
+            for attempt in 1 2 3; do
               echo "Downloading $SOUNDS_ASSET from release $SOUNDS_TAG (attempt $attempt)"
               gh release download "$SOUNDS_TAG" --repo "$GITHUB_REPOSITORY" \
-                 --pattern "$SOUNDS_ASSET" --output sounds.zip --clobber || { rm -f sounds.zip; sleep 8; continue; }
-            fi
-            [ "$(stat -f%z sounds.zip 2>/dev/null || stat -c%s sounds.zip)" -gt 100000000 ] && { ok=1; break; }
-            rm -f sounds.zip; sleep 8
-          done
+                 --pattern "$SOUNDS_ASSET" --output sounds.zip --clobber && big && { ok=1; break; }
+              rm -f sounds.zip; sleep 5
+            done
+          fi
           [ "$ok" = 1 ] || { echo "::error::could not download $SOUNDS_ASSET from release $SOUNDS_TAG; set the SOUNDS_URL repo variable to pull it from somewhere else"; exit 1; }
           ls -la sounds.zip
           # bsdtar reads every zip flavour (unzip rejects some); then verify we got files
@@ -256,24 +280,35 @@ jobs:
           SOUNDS_URL: ${{ endsWith(vars.SOUNDS_URL, '.zip') && vars.SOUNDS_URL || '' }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # This repo is private, so an unauthenticated curl for a release asset
-          # comes back 404 — indistinguishable from the file not existing, which
-          # is what made every job fail the same way. gh is preinstalled on all
-          # runners and uses GITHUB_TOKEN, so it can read our own releases, and
-          # it follows the repo if it is renamed or moved to the org.
+          # The library lives on a release rather than in the repo. gh is
+          # preinstalled on every runner and uses GITHUB_TOKEN, so it can read
+          # our own releases even though this repo is private, and it addresses
+          # the repo it is running in, so it survives a rename or a move to the
+          # org. An unauthenticated curl cannot do either: it gets a 404 that
+          # looks exactly like a missing file.
+          #
+          # SOUNDS_URL is tried first when set, but it is only a preference. A
+          # stale one falls through to the release instead of failing the build
+          # — that variable outlived the repo it pointed at once already, and
+          # took every platform down with it.
+          big () { [ -f sounds.zip ] && [ "$(stat -f%z sounds.zip 2>/dev/null || stat -c%s sounds.zip)" -gt 100000000 ]; }
           ok=0
-          for attempt in 1 2 3 4; do
-            if [ -n "$SOUNDS_URL" ]; then
+          if [ -n "$SOUNDS_URL" ]; then
+            for attempt in 1 2 3; do
               echo "Downloading $SOUNDS_URL (attempt $attempt)"
-              curl -L --fail --retry 3 --retry-all-errors --retry-delay 5 -o sounds.zip "$SOUNDS_URL" || { rm -f sounds.zip; sleep 8; continue; }
-            else
+              curl -L --fail --retry 2 --retry-all-errors --retry-delay 5 -o sounds.zip "$SOUNDS_URL" && big && { ok=1; break; }
+              rm -f sounds.zip; sleep 5
+            done
+            [ "$ok" = 1 ] || echo "::warning::SOUNDS_URL did not work; using this repo's own release instead"
+          fi
+          if [ "$ok" != 1 ]; then
+            for attempt in 1 2 3; do
               echo "Downloading $SOUNDS_ASSET from release $SOUNDS_TAG (attempt $attempt)"
               gh release download "$SOUNDS_TAG" --repo "$GITHUB_REPOSITORY" \
-                 --pattern "$SOUNDS_ASSET" --output sounds.zip --clobber || { rm -f sounds.zip; sleep 8; continue; }
-            fi
-            [ "$(stat -f%z sounds.zip 2>/dev/null || stat -c%s sounds.zip)" -gt 100000000 ] && { ok=1; break; }
-            rm -f sounds.zip; sleep 8
-          done
+                 --pattern "$SOUNDS_ASSET" --output sounds.zip --clobber && big && { ok=1; break; }
+              rm -f sounds.zip; sleep 5
+            done
+          fi
           [ "$ok" = 1 ] || { echo "::error::could not download $SOUNDS_ASSET from release $SOUNDS_TAG; set the SOUNDS_URL repo variable to pull it from somewhere else"; exit 1; }
           mkdir -p presets && tar -xf sounds.zip -C presets
           echo "Sound library: $(find presets -type f | wc -l) files"
@@ -381,24 +416,35 @@ jobs:
           SOUNDS_URL: ${{ endsWith(vars.SOUNDS_URL, '.zip') && vars.SOUNDS_URL || '' }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # This repo is private, so an unauthenticated curl for a release asset
-          # comes back 404 — indistinguishable from the file not existing, which
-          # is what made every job fail the same way. gh is preinstalled on all
-          # runners and uses GITHUB_TOKEN, so it can read our own releases, and
-          # it follows the repo if it is renamed or moved to the org.
+          # The library lives on a release rather than in the repo. gh is
+          # preinstalled on every runner and uses GITHUB_TOKEN, so it can read
+          # our own releases even though this repo is private, and it addresses
+          # the repo it is running in, so it survives a rename or a move to the
+          # org. An unauthenticated curl cannot do either: it gets a 404 that
+          # looks exactly like a missing file.
+          #
+          # SOUNDS_URL is tried first when set, but it is only a preference. A
+          # stale one falls through to the release instead of failing the build
+          # — that variable outlived the repo it pointed at once already, and
+          # took every platform down with it.
+          big () { [ -f sounds.zip ] && [ "$(stat -c%s sounds.zip)" -gt 100000000 ]; }
           ok=0
-          for attempt in 1 2 3 4; do
-            if [ -n "$SOUNDS_URL" ]; then
+          if [ -n "$SOUNDS_URL" ]; then
+            for attempt in 1 2 3; do
               echo "Downloading $SOUNDS_URL (attempt $attempt)"
-              curl -L --fail --retry 3 --retry-all-errors --retry-delay 5 -o sounds.zip "$SOUNDS_URL" || { rm -f sounds.zip; sleep 8; continue; }
-            else
+              curl -L --fail --retry 2 --retry-all-errors --retry-delay 5 -o sounds.zip "$SOUNDS_URL" && big && { ok=1; break; }
+              rm -f sounds.zip; sleep 5
+            done
+            [ "$ok" = 1 ] || echo "::warning::SOUNDS_URL did not work; using this repo's own release instead"
+          fi
+          if [ "$ok" != 1 ]; then
+            for attempt in 1 2 3; do
               echo "Downloading $SOUNDS_ASSET from release $SOUNDS_TAG (attempt $attempt)"
               gh release download "$SOUNDS_TAG" --repo "$GITHUB_REPOSITORY" \
-                 --pattern "$SOUNDS_ASSET" --output sounds.zip --clobber || { rm -f sounds.zip; sleep 8; continue; }
-            fi
-            [ "$(stat -c%s sounds.zip)" -gt 100000000 ] && { ok=1; break; }
-            rm -f sounds.zip; sleep 8
-          done
+                 --pattern "$SOUNDS_ASSET" --output sounds.zip --clobber && big && { ok=1; break; }
+              rm -f sounds.zip; sleep 5
+            done
+          fi
           [ "$ok" = 1 ] || { echo "::error::could not download $SOUNDS_ASSET from release $SOUNDS_TAG; set the SOUNDS_URL repo variable to pull it from somewhere else"; exit 1; }
           mkdir -p presets && unzip -q -o sounds.zip -d presets   # GNU tar can't read zips
           rm -rf presets/Stems
