@@ -6,6 +6,16 @@ on:
     tags: ["v*"]
     branches: ["ci-*"]     # test builds without creating a release
 
+# The sound library is too large to keep in the repo, so it lives as a release
+# asset and every job pulls it. Which release, and which file in it:
+env:
+  SOUNDS_TAG: v1.0.0
+  SOUNDS_ASSET: NebulaTide-Sounds-1.1.0.zip
+
+# Read-only by default; the release job asks for write on its own.
+permissions:
+  contents: read
+
 jobs:
   # ──────────────────────────────────────────────────────────────────────────
   windows:
@@ -27,22 +37,30 @@ jobs:
       - name: Fetch sound library
         shell: pwsh
         env:
-          SOUNDS_URL: ${{ endsWith(vars.SOUNDS_URL, '.zip') && vars.SOUNDS_URL || 'https://github.com/amanorsac/Nebula-Tide/releases/download/v1.0.0/NebulaTide-Sounds-1.1.0.zip' }}
+          # Only an override. Left empty, the library comes from this repo's own
+          # release, which is the normal path.
+          SOUNDS_URL: ${{ endsWith(vars.SOUNDS_URL, '.zip') && vars.SOUNDS_URL || '' }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          "Downloading $env:SOUNDS_URL"
-          # Try the configured URL, then the known-good release asset; retry each on any error.
-          $urls = @($env:SOUNDS_URL, "https://github.com/amanorsac/Nebula-Tide/releases/download/v1.0.0/NebulaTide-Sounds-1.1.0.zip") | Select-Object -Unique
+          # This repo is private, so an unauthenticated curl for a release asset
+          # comes back 404 — indistinguishable from the file not existing, which
+          # is what made every job fail the same way. gh is preinstalled on all
+          # runners and uses GITHUB_TOKEN, so it can read our own releases, and
+          # it follows the repo if it is renamed or moved to the org.
           $ok = $false
-          foreach ($u in $urls) {
-            foreach ($attempt in 1..4) {
-              "Downloading $u (attempt $attempt)"
-              curl.exe -L --fail --retry 3 --retry-all-errors --retry-delay 5 -o sounds.zip "$u"
-              if ($LASTEXITCODE -eq 0 -and (Test-Path sounds.zip) -and (Get-Item sounds.zip).Length -gt 100MB) { $ok = $true; break }
-              Remove-Item sounds.zip -ErrorAction SilentlyContinue; Start-Sleep 8
+          foreach ($attempt in 1..4) {
+            if ($env:SOUNDS_URL) {
+              "Downloading $env:SOUNDS_URL (attempt $attempt)"
+              curl.exe -L --fail --retry 3 --retry-all-errors --retry-delay 5 -o sounds.zip "$env:SOUNDS_URL"
+            } else {
+              "Downloading $env:SOUNDS_ASSET from release $env:SOUNDS_TAG (attempt $attempt)"
+              gh release download $env:SOUNDS_TAG --repo $env:GITHUB_REPOSITORY `
+                 --pattern $env:SOUNDS_ASSET --output sounds.zip --clobber
             }
-            if ($ok) { break }
+            if ($LASTEXITCODE -eq 0 -and (Test-Path sounds.zip) -and (Get-Item sounds.zip).Length -gt 100MB) { $ok = $true; break }
+            Remove-Item sounds.zip -ErrorAction SilentlyContinue; Start-Sleep 8
           }
-          if (-not $ok) { throw "could not download the sound library (check the SOUNDS_URL repo variable)" }
+          if (-not $ok) { throw "could not download $env:SOUNDS_ASSET from release $env:SOUNDS_TAG; set the SOUNDS_URL repo variable to pull it from somewhere else" }
           $mb = [math]::Round((Get-Item sounds.zip).Length / 1MB, 1)
           "Downloaded $mb MB"
           # bsdtar reads every zip flavour (Expand-Archive chokes on some)
@@ -127,22 +145,31 @@ jobs:
 
       - name: Fetch sound library
         env:
-          SOUNDS_URL: ${{ endsWith(vars.SOUNDS_URL, '.zip') && vars.SOUNDS_URL || 'https://github.com/amanorsac/Nebula-Tide/releases/download/v1.0.0/NebulaTide-Sounds-1.1.0.zip' }}
+          # Only an override. Left empty, the library comes from this repo's own
+          # release, which is the normal path.
+          SOUNDS_URL: ${{ endsWith(vars.SOUNDS_URL, '.zip') && vars.SOUNDS_URL || '' }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "Downloading $SOUNDS_URL"
-          # GitHub's CDN occasionally resets large downloads: retry on any error, up to 8 times
-          # Try the configured URL, then the known-good release asset; retry each on any error.
+          # GitHub's CDN occasionally resets large downloads, hence the retries.
+          # This repo is private, so an unauthenticated curl for a release asset
+          # comes back 404 — indistinguishable from the file not existing, which
+          # is what made every job fail the same way. gh is preinstalled on all
+          # runners and uses GITHUB_TOKEN, so it can read our own releases, and
+          # it follows the repo if it is renamed or moved to the org.
           ok=0
-          for u in "$SOUNDS_URL" "https://github.com/amanorsac/Nebula-Tide/releases/download/v1.0.0/NebulaTide-Sounds-1.1.0.zip"; do
-            for attempt in 1 2 3 4; do
-              echo "Downloading $u (attempt $attempt)"
-              if curl -L --fail --retry 3 --retry-all-errors --retry-delay 5 -o sounds.zip "$u" \
-                 && [ "$(stat -f%z sounds.zip 2>/dev/null || stat -c%s sounds.zip)" -gt 100000000 ]; then ok=1; break; fi
-              rm -f sounds.zip; sleep 8
-            done
-            [ "$ok" = 1 ] && break
+          for attempt in 1 2 3 4; do
+            if [ -n "$SOUNDS_URL" ]; then
+              echo "Downloading $SOUNDS_URL (attempt $attempt)"
+              curl -L --fail --retry 3 --retry-all-errors --retry-delay 5 -o sounds.zip "$SOUNDS_URL" || { rm -f sounds.zip; sleep 8; continue; }
+            else
+              echo "Downloading $SOUNDS_ASSET from release $SOUNDS_TAG (attempt $attempt)"
+              gh release download "$SOUNDS_TAG" --repo "$GITHUB_REPOSITORY" \
+                 --pattern "$SOUNDS_ASSET" --output sounds.zip --clobber || { rm -f sounds.zip; sleep 8; continue; }
+            fi
+            [ "$(stat -f%z sounds.zip 2>/dev/null || stat -c%s sounds.zip)" -gt 100000000 ] && { ok=1; break; }
+            rm -f sounds.zip; sleep 8
           done
-          [ "$ok" = 1 ] || { echo "::error::could not download the sound library (check the SOUNDS_URL repo variable)"; exit 1; }
+          [ "$ok" = 1 ] || { echo "::error::could not download $SOUNDS_ASSET from release $SOUNDS_TAG; set the SOUNDS_URL repo variable to pull it from somewhere else"; exit 1; }
           ls -la sounds.zip
           # bsdtar reads every zip flavour (unzip rejects some); then verify we got files
           mkdir -p presets && tar -xf sounds.zip -C presets
@@ -224,18 +251,30 @@ jobs:
       # the library is bundled INTO the iPad app (no downloads after install)
       - name: Fetch sound library
         env:
-          SOUNDS_URL: ${{ endsWith(vars.SOUNDS_URL, '.zip') && vars.SOUNDS_URL || 'https://github.com/amanorsac/Nebula-Tide/releases/download/v1.0.0/NebulaTide-Sounds-1.1.0.zip' }}
+          # Only an override. Left empty, the library comes from this repo's own
+          # release, which is the normal path.
+          SOUNDS_URL: ${{ endsWith(vars.SOUNDS_URL, '.zip') && vars.SOUNDS_URL || '' }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # This repo is private, so an unauthenticated curl for a release asset
+          # comes back 404 — indistinguishable from the file not existing, which
+          # is what made every job fail the same way. gh is preinstalled on all
+          # runners and uses GITHUB_TOKEN, so it can read our own releases, and
+          # it follows the repo if it is renamed or moved to the org.
           ok=0
-          for u in "$SOUNDS_URL" "https://github.com/amanorsac/Nebula-Tide/releases/download/v1.0.0/NebulaTide-Sounds-1.1.0.zip"; do
-            for attempt in 1 2 3 4; do
-              if curl -L --fail --retry 3 --retry-all-errors --retry-delay 5 -o sounds.zip "$u" \
-                 && [ "$(stat -f%z sounds.zip 2>/dev/null || stat -c%s sounds.zip)" -gt 100000000 ]; then ok=1; break; fi
-              rm -f sounds.zip; sleep 8
-            done
-            [ "$ok" = 1 ] && break
+          for attempt in 1 2 3 4; do
+            if [ -n "$SOUNDS_URL" ]; then
+              echo "Downloading $SOUNDS_URL (attempt $attempt)"
+              curl -L --fail --retry 3 --retry-all-errors --retry-delay 5 -o sounds.zip "$SOUNDS_URL" || { rm -f sounds.zip; sleep 8; continue; }
+            else
+              echo "Downloading $SOUNDS_ASSET from release $SOUNDS_TAG (attempt $attempt)"
+              gh release download "$SOUNDS_TAG" --repo "$GITHUB_REPOSITORY" \
+                 --pattern "$SOUNDS_ASSET" --output sounds.zip --clobber || { rm -f sounds.zip; sleep 8; continue; }
+            fi
+            [ "$(stat -f%z sounds.zip 2>/dev/null || stat -c%s sounds.zip)" -gt 100000000 ] && { ok=1; break; }
+            rm -f sounds.zip; sleep 8
           done
-          [ "$ok" = 1 ] || { echo "::error::could not download the sound library"; exit 1; }
+          [ "$ok" = 1 ] || { echo "::error::could not download $SOUNDS_ASSET from release $SOUNDS_TAG; set the SOUNDS_URL repo variable to pull it from somewhere else"; exit 1; }
           mkdir -p presets && tar -xf sounds.zip -C presets
           echo "Sound library: $(find presets -type f | wc -l) files"
 
@@ -337,18 +376,30 @@ jobs:
       # first launch (no downloads after install)
       - name: Pack the encrypted container into APK assets
         env:
-          SOUNDS_URL: ${{ endsWith(vars.SOUNDS_URL, '.zip') && vars.SOUNDS_URL || 'https://github.com/amanorsac/Nebula-Tide/releases/download/v1.0.0/NebulaTide-Sounds-1.1.0.zip' }}
+          # Only an override. Left empty, the library comes from this repo's own
+          # release, which is the normal path.
+          SOUNDS_URL: ${{ endsWith(vars.SOUNDS_URL, '.zip') && vars.SOUNDS_URL || '' }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # This repo is private, so an unauthenticated curl for a release asset
+          # comes back 404 — indistinguishable from the file not existing, which
+          # is what made every job fail the same way. gh is preinstalled on all
+          # runners and uses GITHUB_TOKEN, so it can read our own releases, and
+          # it follows the repo if it is renamed or moved to the org.
           ok=0
-          for u in "$SOUNDS_URL" "https://github.com/amanorsac/Nebula-Tide/releases/download/v1.0.0/NebulaTide-Sounds-1.1.0.zip"; do
-            for attempt in 1 2 3 4; do
-              if curl -L --fail --retry 3 --retry-all-errors --retry-delay 5 -o sounds.zip "$u" \
-                 && [ "$(stat -c%s sounds.zip)" -gt 100000000 ]; then ok=1; break; fi
-              rm -f sounds.zip; sleep 8
-            done
-            [ "$ok" = 1 ] && break
+          for attempt in 1 2 3 4; do
+            if [ -n "$SOUNDS_URL" ]; then
+              echo "Downloading $SOUNDS_URL (attempt $attempt)"
+              curl -L --fail --retry 3 --retry-all-errors --retry-delay 5 -o sounds.zip "$SOUNDS_URL" || { rm -f sounds.zip; sleep 8; continue; }
+            else
+              echo "Downloading $SOUNDS_ASSET from release $SOUNDS_TAG (attempt $attempt)"
+              gh release download "$SOUNDS_TAG" --repo "$GITHUB_REPOSITORY" \
+                 --pattern "$SOUNDS_ASSET" --output sounds.zip --clobber || { rm -f sounds.zip; sleep 8; continue; }
+            fi
+            [ "$(stat -c%s sounds.zip)" -gt 100000000 ] && { ok=1; break; }
+            rm -f sounds.zip; sleep 8
           done
-          [ "$ok" = 1 ] || { echo "::error::could not download the sound library"; exit 1; }
+          [ "$ok" = 1 ] || { echo "::error::could not download $SOUNDS_ASSET from release $SOUNDS_TAG; set the SOUNDS_URL repo variable to pull it from somewhere else"; exit 1; }
           mkdir -p presets && unzip -q -o sounds.zip -d presets   # GNU tar can't read zips
           rm -rf presets/Stems
           # build the packer and produce the encrypted container
