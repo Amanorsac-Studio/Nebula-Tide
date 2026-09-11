@@ -1,0 +1,121 @@
+name: App Store screenshots (iPhone + iPad)
+
+# Run this by hand when the interface has changed and the store listing needs
+# new pictures. It is separate from the release build on purpose: it is slow,
+# it is not needed on every commit, and nothing depends on it.
+#
+# The screenshots are real. The app is built for the simulator, installed on a
+# booted iPhone and iPad, and captured at each device's true resolution, which
+# is what App Store Connect checks. Desktop captures scaled up would be the
+# wrong pixel count and the wrong safe areas.
+on:
+  workflow_dispatch:
+    inputs:
+      seconds_before_capture:
+        description: "How long to let the app settle before the shot"
+        default: "25"
+
+permissions:
+  contents: read
+
+env:
+  SOUNDS_TAG: v1.0.0
+  SOUNDS_ASSET: NebulaTide-Sounds-1.1.0.zip
+
+jobs:
+  shots:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch sound library
+        env:
+          SOUNDS_URL: ${{ endsWith(vars.SOUNDS_URL, '.zip') && vars.SOUNDS_URL || '' }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Without the library the app opens on an empty stage, and a
+          # screenshot of an empty stage is worse than no screenshot.
+          ok=0
+          if [ -n "$SOUNDS_URL" ]; then
+            curl -L --fail --retry 2 -o sounds.zip "$SOUNDS_URL" && ok=1
+          fi
+          if [ "$ok" != 1 ]; then
+            gh release download "$SOUNDS_TAG" --repo "$GITHUB_REPOSITORY" \
+               --pattern "$SOUNDS_ASSET" --output sounds.zip --clobber
+          fi
+          mkdir -p presets && tar -xf sounds.zip -C presets
+          echo "Sound library: $(find presets -type f | wc -l) files"
+
+      - name: Pack the encrypted container (mobile)
+        run: |
+          cmake -S . -B build-pack -G Xcode
+          cmake --build build-pack --config Release --target NebulaPack
+          ./build-pack/NebulaPack_artefacts/Release/NebulaPack presets mobile.ntlib --ogg 7
+          mkdir -p ios-assets && mv mobile.ntlib ios-assets/NebulaTide.ntlib
+
+      - name: Build for the simulator
+        run: |
+          # The simulator needs its own SDK: an iphoneos build will not install.
+          # No signing either, since nothing leaves the machine.
+          cmake -S . -B build-sim -G Xcode \
+                -DCMAKE_SYSTEM_NAME=iOS \
+                -DCMAKE_OSX_SYSROOT=iphonesimulator \
+                -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0 \
+                -DNEBULA_REQUIRE_LICENSE=OFF
+          cmake --build build-sim --config Release \
+                --target NebulaTide_Standalone \
+                -- -sdk iphonesimulator CODE_SIGNING_ALLOWED=NO
+
+      - name: Capture on iPhone and iPad
+        env:
+          SETTLE: ${{ inputs.seconds_before_capture }}
+        run: |
+          APP=$(find build-sim -name "*.app" -path "*Release-iphonesimulator*" | head -1)
+          [ -n "$APP" ] || { echo "::error::no .app was produced"; find build-sim -name "*.app" | head; exit 1; }
+          echo "App: $APP"
+          BUNDLE=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$APP/Info.plist")
+          echo "Bundle: $BUNDLE"
+
+          mkdir -p shots
+
+          # Pick the largest iPhone and iPad the runner offers rather than
+          # naming a model. Apple renames these every year and a hardcoded
+          # name is a build that breaks itself in September.
+          shoot () {
+            local label="$1" pattern="$2"
+            local device
+            device=$(xcrun simctl list devices available | grep -E "$pattern" | tail -1 | sed 's/ (.*//' | sed 's/^ *//')
+            if [ -z "$device" ]; then
+              echo "::warning::no simulator matched $pattern, skipping $label"
+              return
+            fi
+            echo "== $label on $device =="
+            xcrun simctl shutdown all || true
+            xcrun simctl boot "$device"
+            xcrun simctl bootstatus "$device" -b
+            xcrun simctl install "$device" "$APP"
+            xcrun simctl launch "$device" "$BUNDLE"
+            sleep "${SETTLE:-25}"
+            xcrun simctl io "$device" screenshot "shots/${label}.png"
+            xcrun simctl shutdown "$device" || true
+            echo "captured shots/${label}.png"
+          }
+
+          shoot iphone 'iPhone .*Pro Max'
+          shoot ipad   'iPad Pro.*13'
+
+          # A fallback if the patterns above matched nothing on this image.
+          if [ -z "$(ls -A shots 2>/dev/null)" ]; then
+            echo "Devices this runner offers:"
+            xcrun simctl list devices available
+            echo "::error::no screenshots were captured"
+            exit 1
+          fi
+          sips -g pixelWidth -g pixelHeight shots/*.png
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: NebulaTide-screenshots
+          if-no-files-found: warn
+          path: shots/*.png
