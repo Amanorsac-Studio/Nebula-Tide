@@ -145,7 +145,9 @@ public:
     // Copies the chosen audio into the user folder and rewrites the manifest.
     juce::Result saveUserPreset (const juce::String& name, juce::Colour colour,
                                  const juce::Array<UserSlot>& slots,
-                                 int reverbType, float rMix, float rSize, float rDamp);
+                                 int reverbType, float rMix, float rSize, float rDamp,
+                                 const juce::String& defaultFx = {},
+                                 const juce::String& defaultTex = {});
     juce::Result deleteUserPreset (const juce::String& name);
     juce::Result importAuxSound (int cat, const juce::File& source);   // 0 fx, 1 texture
     juce::Result deleteAuxSound (int cat, const juce::String& name);

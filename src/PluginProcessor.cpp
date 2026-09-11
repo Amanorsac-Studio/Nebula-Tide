@@ -1552,6 +1552,8 @@ void NebulaTideProcessor::scanUserContent()
                         g.rSize = (float) (double) rv.getProperty ("size", 0.85);
                         g.rDamp = (float) (double) rv.getProperty ("damp", 0.45);
                     }
+                    g.defaultFx  = entry.getProperty ("fx", "").toString();
+                    g.defaultTex = entry.getProperty ("texture", "").toString();
                     break;
                 }
             }
@@ -1586,6 +1588,8 @@ void NebulaTideProcessor::writeUserManifest()
         rv->setProperty ("size", g.rSize);
         rv->setProperty ("damp", g.rDamp);
         o->setProperty ("reverb", juce::var (rv));
+        if (g.defaultFx.isNotEmpty())  o->setProperty ("fx", g.defaultFx);
+        if (g.defaultTex.isNotEmpty()) o->setProperty ("texture", g.defaultTex);
         arr.add (juce::var (o));
     }
     auto* root = new juce::DynamicObject();
@@ -1598,7 +1602,9 @@ void NebulaTideProcessor::writeUserManifest()
 
 juce::Result NebulaTideProcessor::saveUserPreset (const juce::String& rawName, juce::Colour colour,
                                                   const juce::Array<UserSlot>& slots,
-                                                  int reverbType, float rMix, float rSize, float rDamp)
+                                                  int reverbType, float rMix, float rSize, float rDamp,
+                                                  const juce::String& defaultFx,
+                                                  const juce::String& defaultTex)
 {
     const auto name = sanitiseName (rawName);
     if (name.isEmpty())
@@ -1642,6 +1648,7 @@ juce::Result NebulaTideProcessor::saveUserPreset (const juce::String& rawName, j
         {
             g.colour = colour; g.hasReverbDefaults = true;
             g.rType = reverbType; g.rMix = rMix; g.rSize = rSize; g.rDamp = rDamp;
+            g.defaultFx = defaultFx; g.defaultTex = defaultTex;
             found = true;
             break;
         }
@@ -1651,6 +1658,7 @@ juce::Result NebulaTideProcessor::saveUserPreset (const juce::String& rawName, j
         g.name = name; g.isUser = true; g.colour = colour;
         g.hasReverbDefaults = true;
         g.rType = reverbType; g.rMix = rMix; g.rSize = rSize; g.rDamp = rDamp;
+        g.defaultFx = defaultFx; g.defaultTex = defaultTex;
         presets.add (g);
     }
     writeUserManifest();

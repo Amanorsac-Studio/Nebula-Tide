@@ -1,6 +1,7 @@
 #pragma once
 #include "PluginProcessor.h"
 #include "PresetShare.h"
+#include "AuxLibrary.h"
 
 // Declared without the default argument: PluginEditor.h declares the same
 // function with one, and a default may only be given once per translation unit.
@@ -116,6 +117,8 @@ private:
     void removeCurrent();
     void browseForSlot (int key);
     void importAux (int cat);
+    void showAuxLibrary();
+    void refreshAuxChoices();
     void sharePreset();          // write the open preset out as one .ntpreset
     void importPack();           // read someone else's .ntpreset in
     void acceptPack (const juce::File&);
@@ -138,6 +141,12 @@ private:
     juce::TextEditor makerBox;
     juce::TextButton shareBtn { "SHARE..." }, importBtn { "IMPORT..." };
     std::unique_ptr<juce::FileChooser> shareChooser;
+
+    // Which FX and texture this preset starts with. Stored per preset, so a
+    // shared one arrives with the atmosphere its maker built around it.
+    juce::Label    fxLabel, texLabel;
+    juce::ComboBox fxBox, texBox;
+    std::unique_ptr<AuxLibrary> auxLibrary;
     juce::Viewport listView;
     juce::Component listHolder;
     juce::OwnedArray<juce::TextButton> listButtons;

@@ -107,8 +107,8 @@ PresetStudio::PresetStudio (NebulaTideProcessor& p, std::function<void()> onChan
     newBtn.onClick    = [this] { startNew(); };
     saveBtn.onClick   = [this] { save(); };
     deleteBtn.onClick = [this] { removeCurrent(); };
-    addFxBtn.onClick  = [this] { importAux (0); };
-    addTexBtn.onClick = [this] { importAux (1); };
+    addFxBtn.onClick  = [this] { showAuxLibrary(); };
+    addTexBtn.onClick = [this] { showAuxLibrary(); };
     makerLabel.setText ("MADE BY", juce::dontSendNotification);
     makerLabel.setFont (ui::labelFont (10.0f));
     makerLabel.setColour (juce::Label::textColourId, colours::textDim);
@@ -126,6 +126,25 @@ PresetStudio::PresetStudio (NebulaTideProcessor& p, std::function<void()> onChan
     closeBtn.onClick  = [this] { setVisible (false); };
     for (auto* b : { &newBtn, &saveBtn, &deleteBtn, &addFxBtn, &addTexBtn, &closeBtn, &shareBtn, &importBtn })
         addAndMakeVisible (*b);
+
+    auxLibrary = std::make_unique<AuxLibrary> (processor, [this]
+    {
+        refreshAuxChoices();
+        if (libraryChanged) libraryChanged();
+    });
+    addChildComponent (*auxLibrary);
+
+    fxLabel.setText ("DEFAULT FX", juce::dontSendNotification);
+    texLabel.setText ("DEFAULT TEXTURE", juce::dontSendNotification);
+    for (auto* l : { &fxLabel, &texLabel })
+    {
+        l->setFont (ui::labelFont (10.0f));
+        l->setColour (juce::Label::textColourId, colours::textDim);
+        addAndMakeVisible (*l);
+    }
+    addAndMakeVisible (fxBox);
+    addAndMakeVisible (texBox);
+    refreshAuxChoices();
 
     startNew();
     startTimerHz (4);
@@ -178,6 +197,9 @@ void PresetStudio::startNew()
     deleteBtn.setEnabled (false);
     refreshList();
     repaint();
+    refreshAuxChoices();
+    fxBox.setSelectedId (1, juce::dontSendNotification);
+    texBox.setSelectedId (1, juce::dontSendNotification);
 }
 
 void PresetStudio::loadPreset (const juce::String& name)
@@ -200,6 +222,9 @@ void PresetStudio::loadPreset (const juce::String& name)
         mixSlider.setValue (g.rMix, juce::dontSendNotification);
         sizeSlider.setValue (g.rSize, juce::dontSendNotification);
         dampSlider.setValue (g.rDamp, juce::dontSendNotification);
+            refreshAuxChoices();
+            fxBox.setText (g.defaultFx.isNotEmpty() ? g.defaultFx : "(none)", juce::dontSendNotification);
+            texBox.setText (g.defaultTex.isNotEmpty() ? g.defaultTex : "(none)", juce::dontSendNotification);
         deleteBtn.setEnabled (true);
         refreshList();
         repaint();
@@ -250,6 +275,33 @@ juce::String PresetStudio::uniqueUserName (const juce::String& wanted) const
     return wanted + " " + juce::String (juce::Random::getSystemRandom().nextInt (9999));
 }
 
+void PresetStudio::showAuxLibrary()
+{
+    auxLibrary->setBounds (getLocalBounds().reduced (40, 30));
+    auxLibrary->setVisible (true);
+    auxLibrary->toFront (true);
+}
+
+// The two dropdowns list whatever is in the library right now, plus a "none".
+// Rebuilt rather than patched, because a sound can appear or vanish while the
+// panel is open.
+void PresetStudio::refreshAuxChoices()
+{
+    auto fill = [this] (juce::ComboBox& box, int cat)
+    {
+        const auto keep = box.getText();
+        box.clear (juce::dontSendNotification);
+        box.addItem ("(none)", 1);
+        const auto& list = processor.getAuxSounds (cat);
+        for (int i = 0; i < list.size(); ++i)
+            box.addItem (list.getReference (i).name, i + 2);
+        box.setText (keep.isNotEmpty() ? keep : "(none)", juce::dontSendNotification);
+        if (box.getSelectedId() == 0) box.setSelectedId (1, juce::dontSendNotification);
+    };
+    fill (fxBox, 0);
+    fill (texBox, 1);
+}
+
 void PresetStudio::sharePreset()
 {
     presetshare::Meta meta;
@@ -268,6 +320,18 @@ void PresetStudio::sharePreset()
 
     if (meta.name.isEmpty()) { say ("Give the preset a name first.", true); return; }
 
+    // Look up the files behind the two dropdown choices.
+    juce::File fxFile, texFile;
+    auto findAux = [this] (int cat, const juce::ComboBox& box) -> juce::File
+    {
+        if (box.getSelectedId() <= 1) return {};
+        for (const auto& s : processor.getAuxSounds (cat))
+            if (s.name == box.getText()) return s.file;
+        return {};
+    };
+    fxFile  = findAux (0, fxBox);
+    texFile = findAux (1, texBox);
+
     // Remember the name for next time, only once there is one.
     if (meta.maker.isNotEmpty())
         makerNameFile().replaceWithText (meta.maker);
@@ -280,7 +344,7 @@ void PresetStudio::sharePreset()
 
     shareChooser->launchAsync (juce::FileBrowserComponent::saveMode
                                  | juce::FileBrowserComponent::warnAboutOverwriting,
-        [this, meta, keys = std::array<juce::File, 12>{ keys[0], keys[1], keys[2], keys[3],
+        [this, meta, fxFile, texFile, keys = std::array<juce::File, 12>{ keys[0], keys[1], keys[2], keys[3],
                                                         keys[4], keys[5], keys[6], keys[7],
                                                         keys[8], keys[9], keys[10], keys[11] }]
         (const juce::FileChooser& fc)
@@ -290,7 +354,7 @@ void PresetStudio::sharePreset()
             if (! dest.getFileName().endsWithIgnoreCase (presetshare::extension))
                 dest = dest.withFileExtension (presetshare::extension);
 
-            const auto r = presetshare::writePack (dest, meta, keys.data());
+            const auto r = presetshare::writePack (dest, meta, keys.data(), fxFile, texFile);
             if (r.failed()) { say (r.getErrorMessage(), true); return; }
 
             say ("Shared. " + dest.getFileName() + " is ready to send.", false);
@@ -322,7 +386,10 @@ void PresetStudio::acceptPack (const juce::File& src)
     const auto landing = uniqueUserName (peeked.meta.name);
 
     presetshare::Contents got;
-    r = presetshare::readPack (src, NebulaTideProcessor::userContentDir(), got, landing);
+    const auto userDir = NebulaTideProcessor::userContentDir();
+    r = presetshare::readPack (src, userDir, got, landing,
+                               userDir.getChildFile ("fx"),
+                               userDir.getChildFile ("textures"));
     if (r.failed()) { say (r.getErrorMessage(), true); return; }
 
     // Carry the colour and the reverb across too, so an imported preset looks
@@ -336,18 +403,30 @@ void PresetStudio::acceptPack (const juce::File& src)
                            .getChildFile (stem + "_" + presetshare::keyNames[i] + ".flac");
         if (f.existsAsFile()) chosen.add ({ i, f });
     }
+    // The manifest stores the display name, which is the filename with
+    // underscores and hyphens turned into spaces - the same transform the
+    // scanner applies, so the two agree.
+    auto auxDisplayName = [] (const juce::String& fileName)
+    {
+        return fileName.upToLastOccurrenceOf (".", false, false)
+                       .replaceCharacters ("_-", "  ");
+    };
     const auto saved = processor.saveUserPreset (landing, got.meta.colour, chosen,
                                                  got.meta.reverbType, got.meta.mix,
-                                                 got.meta.size, got.meta.damp);
+                                                 got.meta.size, got.meta.damp,
+                                                 got.hasFx  ? auxDisplayName (got.meta.fxName)  : juce::String(),
+                                                 got.hasTex ? auxDisplayName (got.meta.texName) : juce::String());
     if (saved.failed()) { say (saved.getErrorMessage(), true); return; }
 
     processor.reloadLibrary();
     if (libraryChanged) libraryChanged();
+    refreshAuxChoices();
     refreshList();
     loadPreset (landing);
 
     juce::String note = "Imported " + landing + ".";
     if (got.meta.maker.isNotEmpty()) note += " Made by " + got.meta.maker + ".";
+    if (got.hasFx || got.hasTex) note += " Its sounds came with it.";
     if (! landing.equalsIgnoreCase (peeked.meta.name))
         note += " Renamed, that name was taken.";
     say (note, false);
@@ -366,7 +445,9 @@ void PresetStudio::save()
                                              reverbBox.getSelectedId() - 1,
                                              (float) mixSlider.getValue(),
                                              (float) sizeSlider.getValue(),
-                                             (float) dampSlider.getValue());
+                                             (float) dampSlider.getValue(),
+                                             (fxBox.getSelectedId() <= 1 ? juce::String() : fxBox.getText()),
+                                             (texBox.getSelectedId() <= 1 ? juce::String() : texBox.getText()));
     if (r.failed())
     {
         say (r.getErrorMessage(), true);
@@ -393,8 +474,13 @@ void PresetStudio::removeCurrent()
             .withIconType (juce::MessageBoxIconType::WarningIcon)
             .withTitle ("Delete preset")
             .withMessage ("Delete \"" + name + "\" and its audio files?\n\nThis cannot be undone.")
-            .withButton ("Delete")
-            .withButton ("Cancel"),
+            // Cancel first, and deliberately so. The callback is given the
+            // index of the button pressed, counting from zero, and this used
+            // to test for 1 while Delete sat at 0 — so Delete did nothing and
+            // Cancel deleted. Putting Cancel at index 0 also means a dismissed
+            // dialog cancels rather than destroys.
+            .withButton ("Cancel")
+            .withButton ("Delete"),
         [this, name] (int result)
         {
             if (result != 1) return;
@@ -483,6 +569,9 @@ void PresetStudio::paint (juce::Graphics& g)
 
 void PresetStudio::resized()
 {
+    if (auxLibrary != nullptr && auxLibrary->isVisible())
+        auxLibrary->setBounds (getLocalBounds().reduced (40, 30));
+
     auto area = getLocalBounds().reduced (24, 18);
 
     auto top = area.removeFromTop (30);
@@ -557,6 +646,14 @@ void PresetStudio::resized()
     trim (mixLabel, mixSlider);
     trim (sizeLabel, sizeSlider);
     trim (dampLabel, dampSlider);
+
+    area.removeFromTop (8);
+    row = area.removeFromTop (24);
+    fxLabel.setBounds (row.removeFromLeft (74));
+    fxBox.setBounds (row.removeFromLeft (150));
+    row.removeFromLeft (16);
+    texLabel.setBounds (row.removeFromLeft (104));
+    texBox.setBounds (row.removeFromLeft (150));
 
     area.removeFromTop (12);
     row = area.removeFromTop (30);

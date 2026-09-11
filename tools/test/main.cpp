@@ -833,6 +833,51 @@ static void testPresetSharing()
         }
     }
 
+    // The effect and texture a preset names must travel with it, or a
+    // shared preset arrives pointing at sounds the recipient does not have.
+    {
+        auto fxSrc  = tmp.getChildFile ("Thunder Hit.wav");
+        auto texSrc = tmp.getChildFile ("Rain Loop.wav");
+        for (auto* f : { &fxSrc, &texSrc })
+        {
+            std::unique_ptr<juce::FileOutputStream> os (f->createOutputStream());
+            std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (os.get(), 44100.0, 1, 16, {}, 0));
+            os.release();
+            juce::AudioBuffer<float> b (1, 2205);
+            b.clear();
+            b.setSample (0, 0, 0.9f);
+            w->writeFromAudioSampleBuffer (b, 0, b.getNumSamples());
+        }
+
+        auto withAux = tmp.getChildFile (juce::String ("withaux") + presetshare::extension);
+        auto wr2 = presetshare::writePack (withAux, meta, source, fxSrc, texSrc);
+        check (wr2.wasOk(), "a pack can carry an effect and a texture", wr2.getErrorMessage());
+
+        presetshare::Contents auxPeek;
+        check (presetshare::peekPack (withAux, auxPeek).wasOk(), "it still reads back");
+        check (auxPeek.hasFx && auxPeek.hasTex, "both aux sounds are in there");
+        check (auxPeek.meta.fxName == "Thunder Hit.wav", "the effect keeps its filename",
+               auxPeek.meta.fxName);
+
+        auto fxDir  = tmp.getChildFile ("User2/fx");
+        auto texDir = tmp.getChildFile ("User2/textures");
+        presetshare::Contents landed;
+        auto rd2 = presetshare::readPack (withAux, tmp.getChildFile ("User2"), landed, {}, fxDir, texDir);
+        check (rd2.wasOk(), "a pack with aux sounds unpacks", rd2.getErrorMessage());
+        check (fxDir.getChildFile ("Thunder Hit.wav").existsAsFile(),
+               "the effect lands in the fx folder");
+        check (texDir.getChildFile ("Rain Loop.wav").existsAsFile(),
+               "the texture lands in the textures folder");
+
+        // A sound already there must not be replaced: other presets point at it.
+        auto existing = fxDir.getChildFile ("Thunder Hit.wav");
+        existing.replaceWithText ("not audio, but mine");
+        presetshare::Contents again;
+        presetshare::readPack (withAux, tmp.getChildFile ("User2"), again, {}, fxDir, texDir);
+        check (existing.loadFileAsString() == "not audio, but mine",
+               "an aux sound the person already has is left alone");
+    }
+
     // Renaming on import, for when a name is already taken.
     presetshare::Contents renamed;
     auto r2 = presetshare::readPack (pack, userDir, renamed, "Borrowed Pad");

@@ -37,6 +37,11 @@ struct Meta
     juce::Colour colour { 0xff4aa3c7 };
     int   reverbType = 0;
     float mix = 0.3f, size = 0.5f, damp = 0.5f;
+
+    // The effect and texture this preset opens with. Only these two travel
+    // with it, not the whole folder: a preset is incomplete without the
+    // atmosphere its maker built around it, and bloated with everything else.
+    juce::String fxName, texName;
 };
 
 // Everything the app needs to know about a pack without unpacking it.
@@ -45,6 +50,7 @@ struct Contents
     Meta meta;
     int  numKeys = 0;
     bool keyPresent[12] {};
+    bool hasFx = false, hasTex = false;
 };
 
 //==============================================================================
@@ -116,6 +122,8 @@ namespace detail
         for (int i = 0; i < 12; ++i)
             if (present[i]) keys.add (juce::String (keyNames[i]));
         root->setProperty ("keys", keys);
+        if (m.fxName.isNotEmpty())  root->setProperty ("fx", m.fxName);
+        if (m.texName.isNotEmpty()) root->setProperty ("texture", m.texName);
 
         return juce::JSON::toString (juce::var (root.get()), false);
     }
@@ -126,7 +134,9 @@ namespace detail
     `keys` is indexed 0..11 = C..B; entries that do not exist are skipped.
 */
 inline juce::Result writePack (const juce::File& dest, const Meta& metaIn,
-                               const juce::File keys[12])
+                               const juce::File keys[12],
+                               const juce::File& fxFile = {},
+                               const juce::File& texFile = {})
 {
     Meta meta = metaIn;
     meta.name = detail::sanitise (meta.name);
@@ -163,6 +173,24 @@ inline juce::Result writePack (const juce::File& dest, const Meta& metaIn,
         // costs time.
         builder.addFile (*flacFile, 0, juce::String (keyNames[i]) + ".flac");
     }
+
+    // The two aux sounds go in under fixed names, with the real filename kept
+    // in the JSON. Copied rather than transcoded: these are often short and
+    // already compressed, and an effect is more likely to be a format the
+    // maker chose on purpose.
+    if (fxFile.existsAsFile())
+    {
+        meta.fxName = fxFile.getFileName();
+        builder.addFile (fxFile, 0, "aux/fx_" + fxFile.getFileName());
+    }
+    else meta.fxName = {};
+
+    if (texFile.existsAsFile())
+    {
+        meta.texName = texFile.getFileName();
+        builder.addFile (texFile, 0, "aux/tex_" + texFile.getFileName());
+    }
+    else meta.texName = {};
 
     auto jsonFile = scratch.getChildFile ("preset.json");
     if (! jsonFile.replaceWithText (detail::metaToJson (meta, present)))
@@ -204,6 +232,10 @@ inline juce::Result peekPack (const juce::File& src, Contents& out)
         return juce::Result::fail ("This preset was made by a newer version of Nebula Tide.");
 
     out = {};
+    // DynamicObject::getProperty takes no default; an absent property
+    // comes back as a void var, whose toString() is already empty.
+    out.meta.fxName  = obj->getProperty ("fx").toString();
+    out.meta.texName = obj->getProperty ("texture").toString();
     out.meta.name  = obj->getProperty ("name").toString();
     out.meta.maker = obj->getProperty ("maker").toString();
     out.meta.colour = juce::Colour::fromString ("ff" + obj->getProperty ("colour").toString());
@@ -224,6 +256,11 @@ inline juce::Result peekPack (const juce::File& src, Contents& out)
             ++out.numKeys;
         }
 
+    out.hasFx  = out.meta.fxName.isNotEmpty()
+                   && zip.getIndexOfFileName ("aux/fx_" + out.meta.fxName) >= 0;
+    out.hasTex = out.meta.texName.isNotEmpty()
+                   && zip.getIndexOfFileName ("aux/tex_" + out.meta.texName) >= 0;
+
     if (out.numKeys == 0)
         return juce::Result::fail ("The preset has no sounds in it.");
 
@@ -235,7 +272,8 @@ inline juce::Result peekPack (const juce::File& src, Contents& out)
     pack if `nameOverride` is given to avoid clobbering something.
 */
 inline juce::Result readPack (const juce::File& src, const juce::File& destDir,
-                              Contents& out, const juce::String& nameOverride = {})
+                              Contents& out, const juce::String& nameOverride = {},
+                              const juce::File& fxDir = {}, const juce::File& texDir = {})
 {
     auto r = peekPack (src, out);
     if (r.failed()) return r;
@@ -266,6 +304,26 @@ inline juce::Result readPack (const juce::File& src, const juce::File& destDir,
         if (o == nullptr || ! o->writeFromInputStream (*in, -1))
             return juce::Result::fail ("Could not write " + dest.getFileName());
     }
+
+    // An aux sound the recipient already has is left alone. Same name, same
+    // sound, and overwriting it would replace a file other presets point at.
+    auto unpackAux = [&zip] (bool present, const juce::String& entry,
+                             const juce::File& dir, const juce::String& fileName)
+    {
+        if (! present || dir == juce::File() || fileName.isEmpty()) return;
+        const auto dest = dir.getChildFile (fileName);
+        if (dest.existsAsFile()) return;
+        if (! dir.createDirectory()) return;
+        const int index = zip.getIndexOfFileName (entry);
+        if (index < 0) return;
+        std::unique_ptr<juce::InputStream> in (zip.createStreamForEntry (index));
+        if (in == nullptr) return;
+        std::unique_ptr<juce::FileOutputStream> o (dest.createOutputStream());
+        if (o != nullptr) o->writeFromInputStream (*in, -1);
+    };
+    unpackAux (out.hasFx,  "aux/fx_"  + out.meta.fxName,  fxDir,  out.meta.fxName);
+    unpackAux (out.hasTex, "aux/tex_" + out.meta.texName, texDir, out.meta.texName);
+
     return juce::Result::ok();
 }
 
