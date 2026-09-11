@@ -166,6 +166,14 @@ jobs:
           # Check the secrets before using them. Without this the only symptom
           # is "base64: stdin: error decoding base64 input stream", which says
           # nothing about which secret is wrong or what a right one looks like.
+          # Pasting into the GitHub secret form carries a trailing newline more
+          # often than anyone expects. security import then reports "MAC
+          # verification failed (wrong password?)", which sends you hunting the
+          # certificate when the password is what is wrong. The length is
+          # printed so a password that is empty, or one character longer than
+          # you think, shows up here instead of as a cryptic import failure.
+          MAC_CERT_PASSWORD=$(printf %s "$MAC_CERT_PASSWORD" | tr -d '[:space:]')
+          echo "certificate password length: ${#MAC_CERT_PASSWORD}"
           P12="$RUNNER_TEMP/cert.p12"
           fail=0
           clean=$(printf %s "$MAC_CERT_P12" | tr -d '[:space:]')
@@ -437,6 +445,8 @@ jobs:
           # Same keychain handling as the macOS job: the .keychain-db suffix is
           # required on current runners, and the certificate goes through a
           # variable rather than the command line.
+          APPLE_DIST_PASSWORD=$(printf %s "$APPLE_DIST_PASSWORD" | tr -d '[:space:]')
+          echo "certificate password length: ${#APPLE_DIST_PASSWORD}"
           P12="$RUNNER_TEMP/dist.p12"
           KEYCHAIN="$RUNNER_TEMP/ios.keychain-db"
           KEYCHAIN_PASSWORD="$(openssl rand -base64 24)"
