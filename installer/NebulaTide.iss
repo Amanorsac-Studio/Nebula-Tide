@@ -5,16 +5,18 @@
 #ifndef AppVersion
   #define AppVersion "2.0.0"
 #endif
-#define AppName "Nebula Tide"
+#define AppName "Nebula Tide V2"
 #define AppPublisher "Amanorsac Studio"
 #define BuildDir "..\build\NebulaTide_artefacts\Release"
 
 [Setup]
-AppId={{7E2B9C41-0A63-4E5B-9B1D-4A2C6F1E8B30}
+; a different GUID from version 1, so Windows installs this beside it
+; rather than treating it as an upgrade and uninstalling the old one
+AppId={{C4F18A7D-52E9-4B36-8A11-9D73E0B4C215}
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppPublisher={#AppPublisher}
-DefaultDirName={autopf}\Nebula Tide
+DefaultDirName={autopf}\Nebula Tide V2
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
 OutputBaseFilename=NebulaTide-{#AppVersion}-Setup
@@ -25,7 +27,7 @@ WizardStyle=modern
 ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=admin
 SetupIconFile=..\build\NebulaTide_artefacts\JuceLibraryCode\icon.ico
-UninstallDisplayIcon={app}\Nebula Tide.exe
+UninstallDisplayIcon={app}\Nebula Tide V2.exe
 
 [Tasks]
 Name: "vst3"; Description: "Install VST3 plugin (for DAWs such as Ableton, Cubase, Reaper, FL Studio)"; GroupDescription: "Components:"
@@ -78,7 +80,7 @@ end;
 
 [Files]
 ; standalone app
-Source: "{#BuildDir}\Standalone\Nebula Tide.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#BuildDir}\Standalone\Nebula Tide V2.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 ; the encrypted sound container, into the folder chosen on the Sound Library page
 #if FileExists("..\NebulaTide.ntlib")
@@ -92,7 +94,7 @@ Source: "..\CREDITS.txt"; DestDir: "{app}"; Flags: ignoreversion
 #endif
 
 ; VST3 into the system VST3 folder
-Source: "{#BuildDir}\VST3\Nebula Tide.vst3\*"; DestDir: "{commoncf64}\VST3\Nebula Tide.vst3"; Flags: ignoreversion recursesubdirs createallsubdirs; Tasks: vst3
+Source: "{#BuildDir}\VST3\Nebula Tide V2.vst3\*"; DestDir: "{commoncf64}\VST3\Nebula Tide V2.vst3"; Flags: ignoreversion recursesubdirs createallsubdirs; Tasks: vst3
 
 [InstallDelete]
 ; remove the old unencrypted sound folders left by versions up to 1.1.7
@@ -101,8 +103,8 @@ Type: filesandordirs; Name: "{app}\presets"
 Type: filesandordirs; Name: "{commoncf64}\VST3\presets"
 
 [Icons]
-Name: "{group}\{#AppName}"; Filename: "{app}\Nebula Tide.exe"
-Name: "{autodesktop}\{#AppName}"; Filename: "{app}\Nebula Tide.exe"; Tasks: desktopicon
+Name: "{group}\{#AppName}"; Filename: "{app}\Nebula Tide V2.exe"
+Name: "{autodesktop}\{#AppName}"; Filename: "{app}\Nebula Tide V2.exe"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\Nebula Tide.exe"; Description: "Launch {#AppName}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\Nebula Tide V2.exe"; Description: "Launch {#AppName}"; Flags: nowait postinstall skipifsilent

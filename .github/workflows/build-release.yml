@@ -108,8 +108,8 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
-          Compress-Archive -Path "build\NebulaTide_artefacts\Release\Standalone\Nebula Tide.exe","installer\README.txt" -DestinationPath dist\NebulaTide-Windows-App.zip
-          Compress-Archive -Path "build\NebulaTide_artefacts\Release\VST3\Nebula Tide.vst3" -DestinationPath dist\NebulaTide-Windows-VST3.zip
+          Compress-Archive -Path "build\NebulaTide_artefacts\Release\Standalone\Nebula Tide V2.exe","installer\README.txt" -DestinationPath dist\NebulaTide-Windows-App.zip
+          Compress-Archive -Path "build\NebulaTide_artefacts\Release\VST3\Nebula Tide V2.vst3" -DestinationPath dist\NebulaTide-Windows-VST3.zip
           Copy-Item installer\output\*.exe dist\
 
       - uses: actions/upload-artifact@v4
@@ -210,7 +210,7 @@ jobs:
           [ -n "$IDENTITY" ] || { echo "::error::the certificate imported but no codesigning identity came out of it"; exit 1; }
           echo "Signing identity found"
 
-          APP="build-mac/NebulaTide_artefacts/Release/Standalone/Nebula Tide.app"
+          APP="build-mac/NebulaTide_artefacts/Release/Standalone/Nebula Tide V2.app"
           codesign --deep --force --options runtime --sign "$IDENTITY" "$APP"
           ditto -c -k --keepParent "$APP" NebulaTide-mac.zip
           if [ "$NOTARY" = asc ]; then
@@ -293,17 +293,17 @@ jobs:
                    "pkgroot/Library/Audio/Plug-Ins/VST3" \
                    "pkgroot/Library/Audio/Plug-Ins/Components" \
                    "pkgroot/Library/Application Support/Nebula Tide"
-          cp -R "$R/Standalone/Nebula Tide.app" pkgroot/Applications/
-          cp -R "$R/VST3/Nebula Tide.vst3" "pkgroot/Library/Audio/Plug-Ins/VST3/"
-          cp -R "$R/AU/Nebula Tide.component" "pkgroot/Library/Audio/Plug-Ins/Components/"
+          cp -R "$R/Standalone/Nebula Tide V2.app" pkgroot/Applications/
+          cp -R "$R/VST3/Nebula Tide V2.vst3" "pkgroot/Library/Audio/Plug-Ins/VST3/"
+          cp -R "$R/AU/Nebula Tide V2.component" "pkgroot/Library/Audio/Plug-Ins/Components/"
           cp NebulaTide.ntlib "pkgroot/Library/Application Support/Nebula Tide/"
 
           # belt-and-braces for the plugin: a link to the library INSIDE each
           # bundle, so the VST3/AU find it regardless of DAW sandboxing
           ln -s "/Library/Application Support/Nebula Tide/NebulaTide.ntlib" \
-                "pkgroot/Library/Audio/Plug-Ins/VST3/Nebula Tide.vst3/Contents/Resources/NebulaTide.ntlib" || true
+                "pkgroot/Library/Audio/Plug-Ins/VST3/Nebula Tide V2.vst3/Contents/Resources/NebulaTide.ntlib" || true
           ln -s "/Library/Application Support/Nebula Tide/NebulaTide.ntlib" \
-                "pkgroot/Library/Audio/Plug-Ins/Components/Nebula Tide.component/Contents/Resources/NebulaTide.ntlib" || true
+                "pkgroot/Library/Audio/Plug-Ins/Components/Nebula Tide V2.component/Contents/Resources/NebulaTide.ntlib" || true
 
           # remove the old unencrypted folder left by versions up to 1.1.7
           mkdir -p scripts
@@ -324,9 +324,9 @@ jobs:
         run: |
           mkdir -p dist
           cd build-mac/NebulaTide_artefacts/Release
-          ditto -c -k --keepParent "Standalone/Nebula Tide.app" ../../../dist/NebulaTide-macOS-App.zip
-          ditto -c -k --keepParent "VST3/Nebula Tide.vst3" ../../../dist/NebulaTide-macOS-VST3.zip
-          ditto -c -k --keepParent "AU/Nebula Tide.component" ../../../dist/NebulaTide-macOS-AU.zip
+          ditto -c -k --keepParent "Standalone/Nebula Tide V2.app" ../../../dist/NebulaTide-macOS-App.zip
+          ditto -c -k --keepParent "VST3/Nebula Tide V2.vst3" ../../../dist/NebulaTide-macOS-VST3.zip
+          ditto -c -k --keepParent "AU/Nebula Tide V2.component" ../../../dist/NebulaTide-macOS-AU.zip
           cp ../../../installer/README.txt ../../../dist/
 
       - uses: actions/upload-artifact@v4

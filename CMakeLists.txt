@@ -25,12 +25,17 @@ else()
     set(NEBULA_FORMATS Standalone VST3)
 endif()
 
+# Version 2 is a separate paid product that installs beside version 1, so it
+# needs its own identity everywhere a host or an OS looks. The plugin code and
+# the bundle id are what actually keep them apart: a DAW keys on the plugin
+# code, so reusing Ntid would make projects built on version 1 load version 2
+# instead, and mixes would come back sounding different.
 juce_add_plugin(NebulaTide
     COMPANY_NAME "NebulaTide"
-    PRODUCT_NAME "Nebula Tide"
-    BUNDLE_ID com.nebulatide.app
+    PRODUCT_NAME "Nebula Tide V2"
+    BUNDLE_ID com.amanorsac.nebulatide
     PLUGIN_MANUFACTURER_CODE Nblt
-    PLUGIN_CODE Ntid
+    PLUGIN_CODE Nt2d
     ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/assets/logo.png"
     FORMATS ${NEBULA_FORMATS}
     IS_SYNTH TRUE
