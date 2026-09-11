@@ -109,8 +109,22 @@ PresetStudio::PresetStudio (NebulaTideProcessor& p, std::function<void()> onChan
     deleteBtn.onClick = [this] { removeCurrent(); };
     addFxBtn.onClick  = [this] { importAux (0); };
     addTexBtn.onClick = [this] { importAux (1); };
+    makerLabel.setText ("MADE BY", juce::dontSendNotification);
+    makerLabel.setFont (ui::labelFont (10.0f));
+    makerLabel.setColour (juce::Label::textColourId, colours::textDim);
+    addAndMakeVisible (makerLabel);
+    makerBox.setTextToShowWhenEmpty ("your name, optional", colours::textDim.withAlpha (0.6f));
+    if (auto saved = makerNameFile(); saved.existsAsFile())
+        makerBox.setText (saved.loadFileAsString().trim(), false);
+    addAndMakeVisible (makerBox);
+
+    shareBtn.onClick  = [this] { sharePreset(); };
+    importBtn.onClick = [this] { importPack(); };
+    addAndMakeVisible (shareBtn);
+    addAndMakeVisible (importBtn);
+
     closeBtn.onClick  = [this] { setVisible (false); };
-    for (auto* b : { &newBtn, &saveBtn, &deleteBtn, &addFxBtn, &addTexBtn, &closeBtn })
+    for (auto* b : { &newBtn, &saveBtn, &deleteBtn, &addFxBtn, &addTexBtn, &closeBtn, &shareBtn, &importBtn })
         addAndMakeVisible (*b);
 
     startNew();
@@ -207,6 +221,136 @@ void PresetStudio::browseForSlot (int key)
             if (f.existsAsFile() && key >= 0 && key < slots.size())
                 slots[key]->setFile (f);
         });
+}
+
+//==============================================================================
+// Where the maker name is kept. Beside the presets rather than in the plugin
+// state, because it belongs to the person, not to any one session or host.
+juce::File PresetStudio::makerNameFile()
+{
+    return NebulaTideProcessor::userContentDir().getParentDirectory().getChildFile ("maker.txt");
+}
+
+// Imported presets must not silently overwrite something already there, and
+// must not collide with a built-in name either.
+juce::String PresetStudio::uniqueUserName (const juce::String& wanted) const
+{
+    auto taken = [this] (const juce::String& n)
+    {
+        for (const auto& g : processor.getPresets())
+            if (g.name.equalsIgnoreCase (n)) return true;
+        return false;
+    };
+    if (! taken (wanted)) return wanted;
+    for (int n = 2; n < 100; ++n)
+    {
+        const auto candidate = wanted + " " + juce::String (n);
+        if (! taken (candidate)) return candidate;
+    }
+    return wanted + " " + juce::String (juce::Random::getSystemRandom().nextInt (9999));
+}
+
+void PresetStudio::sharePreset()
+{
+    presetshare::Meta meta;
+    meta.name  = nameBox.getText().trim();
+    meta.maker = makerBox.getText().trim();
+    meta.colour = swatches.getReference (selectedSwatch).colour;
+    meta.reverbType = reverbBox.getSelectedId() - 1;
+    meta.mix  = (float) mixSlider.getValue();
+    meta.size = (float) sizeSlider.getValue();
+    meta.damp = (float) dampSlider.getValue();
+
+    juce::File keys[12];
+    for (auto* s : slots)
+        if (s->getFile().existsAsFile() && s->getKey() >= 0 && s->getKey() < 12)
+            keys[s->getKey()] = s->getFile();
+
+    if (meta.name.isEmpty()) { say ("Give the preset a name first.", true); return; }
+
+    // Remember the name for next time, only once there is one.
+    if (meta.maker.isNotEmpty())
+        makerNameFile().replaceWithText (meta.maker);
+
+    const auto suggested = juce::File::getSpecialLocation (juce::File::userDesktopDirectory)
+                               .getChildFile (meta.name.replaceCharacter (' ', '_') + presetshare::extension);
+
+    shareChooser = std::make_unique<juce::FileChooser> (
+        "Share this preset as a file", suggested, juce::String ("*") + presetshare::extension);
+
+    shareChooser->launchAsync (juce::FileBrowserComponent::saveMode
+                                 | juce::FileBrowserComponent::warnAboutOverwriting,
+        [this, meta, keys = std::array<juce::File, 12>{ keys[0], keys[1], keys[2], keys[3],
+                                                        keys[4], keys[5], keys[6], keys[7],
+                                                        keys[8], keys[9], keys[10], keys[11] }]
+        (const juce::FileChooser& fc)
+        {
+            auto dest = fc.getResult();
+            if (dest == juce::File()) return;
+            if (! dest.getFileName().endsWithIgnoreCase (presetshare::extension))
+                dest = dest.withFileExtension (presetshare::extension);
+
+            const auto r = presetshare::writePack (dest, meta, keys.data());
+            if (r.failed()) { say (r.getErrorMessage(), true); return; }
+
+            say ("Shared. " + dest.getFileName() + " is ready to send.", false);
+        });
+}
+
+void PresetStudio::importPack()
+{
+    shareChooser = std::make_unique<juce::FileChooser> (
+        "Open a shared preset",
+        juce::File::getSpecialLocation (juce::File::userDesktopDirectory),
+        juce::String ("*") + presetshare::extension);
+
+    shareChooser->launchAsync (juce::FileBrowserComponent::openMode
+                                 | juce::FileBrowserComponent::canSelectFiles,
+        [this] (const juce::FileChooser& fc)
+        {
+            const auto src = fc.getResult();
+            if (src != juce::File()) acceptPack (src);
+        });
+}
+
+void PresetStudio::acceptPack (const juce::File& src)
+{
+    presetshare::Contents peeked;
+    auto r = presetshare::peekPack (src, peeked);
+    if (r.failed()) { say (r.getErrorMessage(), true); return; }
+
+    const auto landing = uniqueUserName (peeked.meta.name);
+
+    presetshare::Contents got;
+    r = presetshare::readPack (src, NebulaTideProcessor::userContentDir(), got, landing);
+    if (r.failed()) { say (r.getErrorMessage(), true); return; }
+
+    // Carry the colour and the reverb across too, so an imported preset looks
+    // and sounds the way its maker left it rather than reverting to defaults.
+    juce::Array<NebulaTideProcessor::UserSlot> chosen;
+    const auto stem = landing.replaceCharacter (' ', '_');
+    for (int i = 0; i < 12; ++i)
+    {
+        if (! got.keyPresent[i]) continue;
+        const auto f = NebulaTideProcessor::userContentDir()
+                           .getChildFile (stem + "_" + presetshare::keyNames[i] + ".flac");
+        if (f.existsAsFile()) chosen.add ({ i, f });
+    }
+    const auto saved = processor.saveUserPreset (landing, got.meta.colour, chosen,
+                                                 got.meta.reverbType, got.meta.mix,
+                                                 got.meta.size, got.meta.damp);
+    if (saved.failed()) { say (saved.getErrorMessage(), true); return; }
+
+    processor.reloadLibrary();
+    if (libraryChanged) libraryChanged();
+    refreshList();
+    loadPreset (landing);
+
+    juce::String note = "Imported " + landing + ".";
+    if (got.meta.maker.isNotEmpty()) note += " Made by " + got.meta.maker + ".";
+    if (! landing.equalsIgnoreCase (peeked.meta.name))
+        note += " Renamed, that name was taken.";
+    say (note, false);
 }
 
 void PresetStudio::save()
@@ -370,7 +514,10 @@ void PresetStudio::resized()
     area.removeFromTop (2);
 
     row = area.removeFromTop (28);
-    nameBox.setBounds (row.removeFromLeft (260));
+    nameBox.setBounds (row.removeFromLeft (200));
+    row.removeFromLeft (10);
+    makerLabel.setBounds (row.removeFromLeft (56));
+    makerBox.setBounds (row.removeFromLeft (150));
     row.removeFromLeft (16);
     {
         auto sw = row.removeFromLeft (swatches.size() * 30).withSizeKeepingCentre (swatches.size() * 30, 22);
@@ -416,6 +563,10 @@ void PresetStudio::resized()
     saveBtn.setBounds (row.removeFromLeft (110));
     row.removeFromLeft (8);
     deleteBtn.setBounds (row.removeFromLeft (100));
+    row.removeFromLeft (8);
+    shareBtn.setBounds (row.removeFromLeft (100));
+    row.removeFromLeft (8);
+    importBtn.setBounds (row.removeFromLeft (100));
     row.removeFromLeft (24);
     auxLabel.setBounds (row.removeFromLeft (170));
     addFxBtn.setBounds (row.removeFromLeft (110));

@@ -7,6 +7,7 @@
 // Build:  cmake --build build --config Release --target NebulaTest
 // Run:    build/NebulaTest_artefacts/Release/NebulaTest.exe
 
+#include "../../src/PresetShare.h"
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_audio_formats/juce_audio_formats.h>
 #include "../../src/Shimmer.h"
@@ -724,6 +725,140 @@ static void testCredits()
                juce::String ("the About screen does not credit ") + gone);
 }
 
+//==============================================================================
+// Sharing a preset is the one feature whose output leaves this machine and is
+// opened by a stranger's copy of the app. A round trip through a real file is
+// the only test that means anything here.
+static void testPresetSharing()
+{
+    std::cout << "\n-- preset sharing --" << std::endl;
+
+    auto tmp = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                   .getChildFile ("NebulaShareTest");
+    tmp.deleteRecursively();
+    tmp.createDirectory();
+
+    // Three keys of real audio, each a different tone so a swapped file shows.
+    const int keys[] = { 0, 4, 7 };                 // C, E, G
+    const double freq[] = { 261.63, 329.63, 392.0 };
+    juce::File source[12];
+
+    juce::WavAudioFormat wav;
+    for (int n = 0; n < 3; ++n)
+    {
+        auto f = tmp.getChildFile (juce::String ("src_") + presetshare::keyNames[keys[n]] + ".wav");
+        std::unique_ptr<juce::FileOutputStream> os (f.createOutputStream());
+        std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (os.get(), 44100.0, 1, 16, {}, 0));
+        os.release();
+        juce::AudioBuffer<float> buf (1, 4410);
+        for (int i = 0; i < buf.getNumSamples(); ++i)
+            buf.setSample (0, i, 0.5f * std::sin (juce::MathConstants<double>::twoPi * freq[n] * i / 44100.0));
+        w->writeFromAudioSampleBuffer (buf, 0, buf.getNumSamples());
+        w.reset();
+        source[keys[n]] = f;
+    }
+
+    presetshare::Meta meta;
+    meta.name = "Shared Test Pad";
+    meta.maker = "Amanorsac Studio";
+    meta.colour = juce::Colour (0xff3fa9c9);
+    meta.reverbType = 2;
+    meta.mix = 0.42f; meta.size = 0.66f; meta.damp = 0.31f;
+
+    const auto pack = tmp.getChildFile (juce::String ("shared") + presetshare::extension);
+    auto wrote = presetshare::writePack (pack, meta, source);
+    check (wrote.wasOk(), "a pack is written", wrote.getErrorMessage());
+    check (pack.existsAsFile() && pack.getSize() > 1000, "the pack is a real file",
+           juce::String (pack.getSize()) + " bytes");
+
+    // FLAC must actually be smaller than the WAV it came from, or the reason
+    // for transcoding at all has quietly stopped being true.
+    juce::int64 sourceBytes = 0;
+    for (int n = 0; n < 3; ++n) sourceBytes += source[keys[n]].getSize();
+    check (pack.getSize() < sourceBytes, "the pack is smaller than the audio going in",
+           juce::String (sourceBytes) + " -> " + juce::String (pack.getSize()));
+
+    presetshare::Contents peeked;
+    auto pk = presetshare::peekPack (pack, peeked);
+    check (pk.wasOk(), "the pack can be read without unpacking", pk.getErrorMessage());
+    check (peeked.meta.name == "Shared Test Pad", "the name survives", peeked.meta.name);
+    check (peeked.meta.maker == "Amanorsac Studio", "the maker survives", peeked.meta.maker);
+    check (peeked.meta.colour == juce::Colour (0xff3fa9c9), "the colour survives",
+           peeked.meta.colour.toDisplayString (true));
+    check (peeked.meta.reverbType == 2, "the reverb type survives");
+    check (std::abs (peeked.meta.mix - 0.42f) < 0.001f
+             && std::abs (peeked.meta.size - 0.66f) < 0.001f
+             && std::abs (peeked.meta.damp - 0.31f) < 0.001f, "the reverb settings survive");
+    check (peeked.numKeys == 3, "three keys in, three keys out",
+           juce::String (peeked.numKeys));
+    check (peeked.keyPresent[0] && peeked.keyPresent[4] && peeked.keyPresent[7]
+             && ! peeked.keyPresent[1], "the right three keys");
+
+    // Unpack where a second machine would, and check the scanner - the code
+    // that actually decides what the app loads - groups it as one preset.
+    auto userDir = tmp.getChildFile ("User");
+    presetshare::Contents got;
+    auto readBack = presetshare::readPack (pack, userDir, got);
+    check (readBack.wasOk(), "the pack unpacks", readBack.getErrorMessage());
+
+    auto scanned = usercontent::scanFolder (userDir);
+    check (scanned.size() == 1, "the scanner sees exactly one preset",
+           juce::String (scanned.size()) + " found");
+    if (scanned.size() == 1)
+    {
+        check (scanned[0].name == "Shared Test Pad", "under the name it was given",
+               scanned[0].name);
+        check (scanned[0].numKeys() == 3, "with its three keys",
+               juce::String (scanned[0].numKeys()));
+        check (scanned[0].keys[0].existsAsFile() && scanned[0].keys[4].existsAsFile()
+                 && scanned[0].keys[7].existsAsFile(), "in the right slots");
+    }
+
+    // The audio has to still be the audio. Decode C back and confirm it is
+    // the tone that went in rather than, say, E.
+    if (scanned.size() == 1 && scanned[0].keys[0].existsAsFile())
+    {
+        juce::AudioFormatManager fm;
+        fm.registerBasicFormats();
+        std::unique_ptr<juce::AudioFormatReader> r (fm.createReaderFor (scanned[0].keys[0]));
+        check (r != nullptr, "the unpacked audio is readable");
+        if (r != nullptr)
+        {
+            juce::AudioBuffer<float> buf ((int) r->numChannels, (int) r->lengthInSamples);
+            r->read (&buf, 0, buf.getNumSamples(), 0, true, true);
+            const double atC = energyNear (buf.getReadPointer (0), buf.getNumSamples(), 261.63, 44100.0);
+            const double atE = energyNear (buf.getReadPointer (0), buf.getNumSamples(), 329.63, 44100.0);
+            check (atC > atE * 4.0, "slot C holds the tone that was put in C",
+                   juce::String (atC, 4) + " vs " + juce::String (atE, 4));
+        }
+    }
+
+    // Renaming on import, for when a name is already taken.
+    presetshare::Contents renamed;
+    auto r2 = presetshare::readPack (pack, userDir, renamed, "Borrowed Pad");
+    check (r2.wasOk(), "a pack can be imported under a different name", r2.getErrorMessage());
+    check (userDir.getChildFile ("Borrowed_Pad_C.flac").existsAsFile(),
+           "the renamed copy lands beside the original");
+
+    // Rubbish in must not be mistaken for a preset.
+    auto junk = tmp.getChildFile (juce::String ("junk") + presetshare::extension);
+    junk.replaceWithText ("this is not a zip");
+    presetshare::Contents nope;
+    check (presetshare::peekPack (junk, nope).failed(), "a file that is not a pack is refused");
+
+    auto empty = tmp.getChildFile ("empty.ntpreset");
+    juce::File none[12];
+    presetshare::Meta m2; m2.name = "Nothing";
+    check (presetshare::writePack (empty, m2, none).failed(),
+           "a preset with no sounds is refused");
+
+    presetshare::Meta m3; m3.name = "   ";
+    check (presetshare::writePack (empty, m3, source).failed(),
+           "a preset with no name is refused");
+
+    tmp.deleteRecursively();
+}
+
 int main()
 {
     std::cout << "Nebula Tide v2 checks" << std::endl;
@@ -734,6 +869,7 @@ int main()
     testUserContent();
     testLicensing();
     testCredits();
+    testPresetSharing();
     std::cout << "\n" << (failures == 0 ? "ALL PASSED" : juce::String (failures) + " FAILED").toStdString()
               << std::endl;
     return failures == 0 ? 0 : 1;

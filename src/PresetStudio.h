@@ -1,5 +1,6 @@
 #pragma once
 #include "PluginProcessor.h"
+#include "PresetShare.h"
 
 // Declared without the default argument: PluginEditor.h declares the same
 // function with one, and a default may only be given once per translation unit.
@@ -80,6 +81,7 @@ private:
 
 //==============================================================================
 class PresetStudio : public juce::Component,
+                     public juce::FileDragAndDropTarget,
                      private juce::Timer
 {
 public:
@@ -90,6 +92,21 @@ public:
     void resized() override;
     void visibilityChanged() override { if (isVisible()) refreshList(); }
 
+    // Dropping a shared preset anywhere on this panel imports it. The slots
+    // have their own drop handling for raw audio and take priority, so a file
+    // only reaches here if it missed them.
+    bool isInterestedInFileDrag (const juce::StringArray& files) override
+    {
+        for (const auto& f : files)
+            if (f.endsWithIgnoreCase (presetshare::extension)) return true;
+        return false;
+    }
+    void filesDropped (const juce::StringArray& files, int, int) override
+    {
+        for (const auto& f : files)
+            if (f.endsWithIgnoreCase (presetshare::extension)) { acceptPack (juce::File (f)); return; }
+    }
+
 private:
     void timerCallback() override;
     void refreshList();          // rebuild the user-preset list from the processor
@@ -99,6 +116,11 @@ private:
     void removeCurrent();
     void browseForSlot (int key);
     void importAux (int cat);
+    void sharePreset();          // write the open preset out as one .ntpreset
+    void importPack();           // read someone else's .ntpreset in
+    void acceptPack (const juce::File&);
+    static juce::File makerNameFile();
+    juce::String uniqueUserName (const juce::String& wanted) const;
     void say (const juce::String& text, bool bad);
 
     NebulaTideProcessor& processor;
@@ -108,6 +130,14 @@ private:
     juce::TextEditor nameBox;
     juce::TextButton newBtn { "+ NEW PRESET" }, saveBtn { "SAVE" }, deleteBtn { "DELETE" }, closeBtn { "DONE" };
     juce::TextButton addFxBtn { "+ FX SOUND" }, addTexBtn { "+ TEXTURE" };
+
+    // Sharing. The maker name is remembered rather than retyped, because a
+    // preset that travels is worth more to its author with a name on it, and
+    // nobody types their own name twice.
+    juce::Label      makerLabel;
+    juce::TextEditor makerBox;
+    juce::TextButton shareBtn { "SHARE..." }, importBtn { "IMPORT..." };
+    std::unique_ptr<juce::FileChooser> shareChooser;
     juce::Viewport listView;
     juce::Component listHolder;
     juce::OwnedArray<juce::TextButton> listButtons;
