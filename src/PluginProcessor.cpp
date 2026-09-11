@@ -1576,9 +1576,20 @@ void NebulaTideProcessor::scanUserContent()
 void NebulaTideProcessor::writeUserManifest()
 {
     juce::Array<juce::var> arr;
+    // Only presets that still have audio. Entries for presets whose files are
+    // gone are dead weight, and a stale one reappearing in the list after a
+    // delete is exactly the bug this file is meant not to have.
+    const auto onDisk = usercontent::scanFolder (userContentDir());
+    auto stillThere = [&onDisk] (const juce::String& n)
+    {
+        for (const auto& s : onDisk)
+            if (s.name.equalsIgnoreCase (n) && s.numKeys() > 0) return true;
+        return false;
+    };
+
     for (const auto& g : presets)
     {
-        if (! g.isUser) continue;
+        if (! g.isUser || ! stillThere (g.name)) continue;
         auto* o = new juce::DynamicObject();
         o->setProperty ("name", g.name);
         o->setProperty ("colour", "#" + g.colour.toDisplayString (false).toLowerCase());
@@ -1672,12 +1683,49 @@ juce::Result NebulaTideProcessor::deleteUserPreset (const juce::String& name)
             return juce::Result::fail ("Built-in presets cannot be deleted.");
 
     const auto dir = userContentDir();
-    const auto fileStem = sanitiseName (name).replaceCharacter (' ', '_');
-    if (fileStem.isEmpty())
-        return juce::Result::fail ("Unknown preset.");
 
-    for (auto& f : dir.findChildFiles (juce::File::findFiles, false, fileStem + "_*"))
-        f.deleteFile();
+    // Ask the scanner which files belong to this preset, rather than guessing
+    // a filename from the name. Two reasons. It is the same code that decides
+    // what appears in the list, so the two can never disagree about which
+    // files are which preset. And a wildcard on the stem was wrong anyway:
+    // deleting "Aurora" with "Aurora_*" also swallowed "Aurora 2", because
+    // that preset's files are named "Aurora_2_<key>".
+    juce::Array<juce::File> doomed;
+    for (const auto& g : usercontent::scanFolder (dir))
+    {
+        if (! g.name.equalsIgnoreCase (name)) continue;
+        for (const auto& k : g.keys)
+            if (k.existsAsFile()) doomed.add (k);
+        break;
+    }
+
+    if (doomed.isEmpty())
+    {
+        // Nothing on disk. The entry is a leftover in the manifest, so drop it
+        // from there and report success: the person asked for it to be gone
+        // and it is gone.
+        bool removedGhost = false;
+        for (int i = presets.size(); --i >= 0;)
+            if (presets.getReference (i).isUser && presets.getReference (i).name.equalsIgnoreCase (name))
+            {
+                presets.remove (i);
+                removedGhost = true;
+            }
+        writeUserManifest();
+        return removedGhost ? juce::Result::ok()
+                            : juce::Result::fail ("Could not find " + name + " to delete.");
+    }
+
+    // Failures were ignored here, which is what made a delete look like it had
+    // worked while the preset came straight back on the next rescan.
+    juce::StringArray stubborn;
+    for (const auto& f : doomed)
+        if (! f.deleteFile())
+            stubborn.add (f.getFileName());
+
+    if (! stubborn.isEmpty())
+        return juce::Result::fail ("Could not delete " + stubborn.joinIntoString (", ")
+                                     + ". Something else may have the file open.");
 
     for (int i = presets.size(); --i >= 0;)
         if (presets.getReference (i).isUser && presets.getReference (i).name.equalsIgnoreCase (name))

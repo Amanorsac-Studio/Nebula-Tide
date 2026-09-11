@@ -729,6 +729,49 @@ static void testCredits()
 // Sharing a preset is the one feature whose output leaves this machine and is
 // opened by a stranger's copy of the app. A round trip through a real file is
 // the only test that means anything here.
+// Deleting a preset must delete that preset, and only that preset. The
+// wildcard this used to use made "Pad" swallow "Pad 2", whose files are
+// named Pad_2_<key> and so matched "Pad_*" too.
+static void testDeleteMatching()
+{
+    std::cout << "\n-- deleting presets --" << std::endl;
+
+    auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                   .getChildFile ("NebulaDeleteTest");
+    dir.deleteRecursively();
+    dir.createDirectory();
+
+    for (const char* n : { "Pad_C.flac", "Pad_E.flac", "Pad_2_C.flac", "Pad_2_E.flac" })
+        dir.getChildFile (n).replaceWithData ("x", 1);
+
+    auto found = usercontent::scanFolder (dir);
+    check (found.size() == 2, "two presets are seen", juce::String (found.size()));
+
+    // What the delete now does: ask the scanner, take only that preset's files.
+    juce::Array<juce::File> doomed;
+    for (const auto& g : found)
+        if (g.name == "Pad")
+            for (const auto& k : g.keys)
+                if (k.existsAsFile()) doomed.add (k);
+
+    check (doomed.size() == 2, "only Pad's own two files are selected",
+           juce::String (doomed.size()));
+    for (const auto& f : doomed) f.deleteFile();
+
+    check (! dir.getChildFile ("Pad_C.flac").existsAsFile(), "Pad is gone");
+    check (dir.getChildFile ("Pad_2_C.flac").existsAsFile(), "Pad 2 survives");
+
+    auto after = usercontent::scanFolder (dir);
+    check (after.size() == 1 && after[0].name == "Pad 2",
+           "only Pad 2 is left", after.size() == 1 ? after[0].name : juce::String (after.size()));
+
+    // And the old wildcard, for the record, would have taken both.
+    check (dir.findChildFiles (juce::File::findFiles, false, "Pad_*").size() == 2,
+           "the old Pad_* wildcard still matches Pad 2's files");
+
+    dir.deleteRecursively();
+}
+
 static void testPresetSharing()
 {
     std::cout << "\n-- preset sharing --" << std::endl;
@@ -915,6 +958,7 @@ int main()
     testLicensing();
     testCredits();
     testPresetSharing();
+    testDeleteMatching();
     std::cout << "\n" << (failures == 0 ? "ALL PASSED" : juce::String (failures) + " FAILED").toStdString()
               << std::endl;
     return failures == 0 ? 0 : 1;
