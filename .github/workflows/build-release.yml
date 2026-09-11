@@ -337,7 +337,9 @@ jobs:
   # ──────────────────────────────────────────────────────────────────────────
   ios:
     if: ${{ !startsWith(github.ref, 'refs/heads/ci-') }}
-    runs-on: macos-14
+    # Apple refuses uploads built with anything older than the iOS 26 SDK,
+    # which ships with Xcode 26, which needs a macOS 15 or later runner.
+    runs-on: macos-26
     env:
       # step-level `if` can read job env but not secrets directly
       # APPLE_DIST_P12 is an Apple Distribution certificate, which covers iOS
@@ -469,6 +471,9 @@ jobs:
           # So signing moves entirely to the export step below, which is where
           # the App Store Connect key can create the distribution profile
           # itself. That is also the only profile this build actually needs.
+          # Say which Xcode this is. If the upload is ever rejected on SDK
+          # grounds again, this line is the first thing to read.
+          xcodebuild -version
           xcodebuild -list -project build-ios/NebulaTide.xcodeproj || true
           xcodebuild -project build-ios/NebulaTide.xcodeproj \
                      -scheme NebulaTide_Standalone -configuration Release \
