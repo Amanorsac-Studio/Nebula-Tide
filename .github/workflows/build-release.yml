@@ -265,7 +265,7 @@ jobs:
           if [ -n "$SOUNDS_URL" ]; then
             for attempt in 1 2 3; do
               echo "Downloading $SOUNDS_URL (attempt $attempt)"
-              curl -L --fail --retry 2 --retry-all-errors --retry-delay 5 -o sounds.zip "$SOUNDS_URL" && big && { ok=1; break; }
+              if curl -L --fail --retry 2 --retry-all-errors --retry-delay 5 -o sounds.zip "$SOUNDS_URL" && big; then ok=1; break; fi
               rm -f sounds.zip; sleep 5
             done
             [ "$ok" = 1 ] || echo "::warning::SOUNDS_URL did not work; using this repo's own release instead"
@@ -273,8 +273,8 @@ jobs:
           if [ "$ok" != 1 ]; then
             for attempt in 1 2 3; do
               echo "Downloading $SOUNDS_ASSET from release $SOUNDS_TAG (attempt $attempt)"
-              gh release download "$SOUNDS_TAG" --repo "$GITHUB_REPOSITORY" \
-                 --pattern "$SOUNDS_ASSET" --output sounds.zip --clobber && big && { ok=1; break; }
+              if gh release download "$SOUNDS_TAG" --repo "$GITHUB_REPOSITORY" \
+                 --pattern "$SOUNDS_ASSET" --output sounds.zip --clobber && big; then ok=1; break; fi
               rm -f sounds.zip; sleep 5
             done
           fi
@@ -398,7 +398,7 @@ jobs:
           if [ -n "$SOUNDS_URL" ]; then
             for attempt in 1 2 3; do
               echo "Downloading $SOUNDS_URL (attempt $attempt)"
-              curl -L --fail --retry 2 --retry-all-errors --retry-delay 5 -o sounds.zip "$SOUNDS_URL" && big && { ok=1; break; }
+              if curl -L --fail --retry 2 --retry-all-errors --retry-delay 5 -o sounds.zip "$SOUNDS_URL" && big; then ok=1; break; fi
               rm -f sounds.zip; sleep 5
             done
             [ "$ok" = 1 ] || echo "::warning::SOUNDS_URL did not work; using this repo's own release instead"
@@ -406,8 +406,8 @@ jobs:
           if [ "$ok" != 1 ]; then
             for attempt in 1 2 3; do
               echo "Downloading $SOUNDS_ASSET from release $SOUNDS_TAG (attempt $attempt)"
-              gh release download "$SOUNDS_TAG" --repo "$GITHUB_REPOSITORY" \
-                 --pattern "$SOUNDS_ASSET" --output sounds.zip --clobber && big && { ok=1; break; }
+              if gh release download "$SOUNDS_TAG" --repo "$GITHUB_REPOSITORY" \
+                 --pattern "$SOUNDS_ASSET" --output sounds.zip --clobber && big; then ok=1; break; fi
               rm -f sounds.zip; sleep 5
             done
           fi
@@ -597,7 +597,7 @@ jobs:
           if [ -n "$SOUNDS_URL" ]; then
             for attempt in 1 2 3; do
               echo "Downloading $SOUNDS_URL (attempt $attempt)"
-              curl -L --fail --retry 2 --retry-all-errors --retry-delay 5 -o sounds.zip "$SOUNDS_URL" && big && { ok=1; break; }
+              if curl -L --fail --retry 2 --retry-all-errors --retry-delay 5 -o sounds.zip "$SOUNDS_URL" && big; then ok=1; break; fi
               rm -f sounds.zip; sleep 5
             done
             [ "$ok" = 1 ] || echo "::warning::SOUNDS_URL did not work; using this repo's own release instead"
@@ -605,8 +605,8 @@ jobs:
           if [ "$ok" != 1 ]; then
             for attempt in 1 2 3; do
               echo "Downloading $SOUNDS_ASSET from release $SOUNDS_TAG (attempt $attempt)"
-              gh release download "$SOUNDS_TAG" --repo "$GITHUB_REPOSITORY" \
-                 --pattern "$SOUNDS_ASSET" --output sounds.zip --clobber && big && { ok=1; break; }
+              if gh release download "$SOUNDS_TAG" --repo "$GITHUB_REPOSITORY" \
+                 --pattern "$SOUNDS_ASSET" --output sounds.zip --clobber && big; then ok=1; break; fi
               rm -f sounds.zip; sleep 5
             done
           fi
