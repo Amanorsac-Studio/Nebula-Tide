@@ -55,8 +55,13 @@ jobs:
         run: |
           cmake -S . -B build-pack -G Xcode
           cmake --build build-pack --config Release --target NebulaPack
-          ./build-pack/NebulaPack_artefacts/Release/NebulaPack presets mobile.ntlib --ogg 7
-          mkdir -p ios-assets && mv mobile.ntlib ios-assets/NebulaTide.ntlib
+          PACK=$(find build-pack -name NebulaPack -type f -perm +111 | head -1)
+          # Must land at the repo root and be named NebulaTide.ntlib: CMake
+          # only bundles it into the iOS app if it is sitting there when the
+          # project is configured, which is the next step.
+          "$PACK" presets NebulaTide.ntlib --ogg 7
+          "$PACK" --verify NebulaTide.ntlib
+          ls -lh NebulaTide.ntlib
 
       - name: Build for the simulator
         run: |
@@ -91,7 +96,10 @@ jobs:
           shoot () {
             local label="$1" pattern="$2"
             local device
-            device=$(xcrun simctl list devices available | grep -E "$pattern" | tail -1 | sed 's/ (.*//' | sed 's/^ *//')
+            # Boot by UUID, not by name. Names carry a model suffix such as
+            # "(M4)" and trimming at the first bracket produced "iPad Pro
+            # 13-inch", which simctl rejects as not a device.
+            device=$(xcrun simctl list devices available | grep -E "$pattern" | tail -1 | grep -oE "[0-9A-Fa-f-]{36}")
             if [ -z "$device" ]; then
               echo "::warning::no simulator matched $pattern, skipping $label"
               return
@@ -104,6 +112,11 @@ jobs:
             xcrun simctl launch "$device" "$BUNDLE"
             sleep "${SETTLE:-25}"
             xcrun simctl io "$device" screenshot "shots/${label}.png"
+            # The app is landscape-only but the simulator boots portrait, so
+            # the capture comes out with the interface lying on its side.
+            # Rotating the file also gives the landscape pixel dimensions the
+            # App Store expects, width before height.
+            sips -r -90 "shots/${label}.png" >/dev/null
             xcrun simctl shutdown "$device" || true
             echo "captured shots/${label}.png"
           }
