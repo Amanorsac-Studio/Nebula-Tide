@@ -8,12 +8,17 @@ name: App Store screenshots (iPhone + iPad)
 # booted iPhone and iPad, and captured at each device's true resolution, which
 # is what App Store Connect checks. Desktop captures scaled up would be the
 # wrong pixel count and the wrong safe areas.
+#
+# Dispatching by name needs the file to exist on the default branch, and this
+# work lives on v2, so pushing a branch called shots-something runs it too.
 on:
   workflow_dispatch:
     inputs:
       seconds_before_capture:
         description: "How long to let the app settle before the shot"
         default: "25"
+  push:
+    branches: ["shots*"]
 
 permissions:
   contents: read
