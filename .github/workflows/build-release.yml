@@ -252,7 +252,15 @@ jobs:
           # — that variable outlived the repo it pointed at once already, and
           # took every platform down with it.
           # GitHub's CDN occasionally resets large downloads, hence the retries.
-          big () { [ -f sounds.zip ] && [ "$(stat -f%z sounds.zip 2>/dev/null || stat -c%s sounds.zip)" -gt 100000000 ]; }
+          # Size alone is not enough. A download can stop part way and still
+          # be large, and the first sign is unzip saying it cannot find the
+          # zip directory - by which point the retry loop has already given
+          # up and moved on. Opening the archive is the real test.
+          big () {
+            [ -f sounds.zip ] || return 1
+            [ "$(stat -f%z sounds.zip 2>/dev/null || stat -c%s sounds.zip)" -gt 100000000 ] || return 1
+            unzip -qq -l sounds.zip >/dev/null 2>&1 || tar -tf sounds.zip >/dev/null 2>&1
+          }
           ok=0
           if [ -n "$SOUNDS_URL" ]; then
             for attempt in 1 2 3; do
@@ -377,7 +385,15 @@ jobs:
           # stale one falls through to the release instead of failing the build
           # — that variable outlived the repo it pointed at once already, and
           # took every platform down with it.
-          big () { [ -f sounds.zip ] && [ "$(stat -f%z sounds.zip 2>/dev/null || stat -c%s sounds.zip)" -gt 100000000 ]; }
+          # Size alone is not enough. A download can stop part way and still
+          # be large, and the first sign is unzip saying it cannot find the
+          # zip directory - by which point the retry loop has already given
+          # up and moved on. Opening the archive is the real test.
+          big () {
+            [ -f sounds.zip ] || return 1
+            [ "$(stat -f%z sounds.zip 2>/dev/null || stat -c%s sounds.zip)" -gt 100000000 ] || return 1
+            unzip -qq -l sounds.zip >/dev/null 2>&1 || tar -tf sounds.zip >/dev/null 2>&1
+          }
           ok=0
           if [ -n "$SOUNDS_URL" ]; then
             for attempt in 1 2 3; do
@@ -568,7 +584,15 @@ jobs:
           # stale one falls through to the release instead of failing the build
           # — that variable outlived the repo it pointed at once already, and
           # took every platform down with it.
-          big () { [ -f sounds.zip ] && [ "$(stat -c%s sounds.zip)" -gt 100000000 ]; }
+          # Size alone is not enough. A download can stop part way and still
+          # be large, and the first sign is unzip saying it cannot find the
+          # zip directory - by which point the retry loop has already given
+          # up and moved on. Opening the archive is the real test.
+          big () {
+            [ -f sounds.zip ] || return 1
+            [ "$(stat -c%s sounds.zip)" -gt 100000000 ] || return 1
+            unzip -qq -l sounds.zip >/dev/null 2>&1 || tar -tf sounds.zip >/dev/null 2>&1
+          }
           ok=0
           if [ -n "$SOUNDS_URL" ]; then
             for attempt in 1 2 3; do
