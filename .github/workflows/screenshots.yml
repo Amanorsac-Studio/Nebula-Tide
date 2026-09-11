@@ -75,7 +75,9 @@ jobs:
         env:
           SETTLE: ${{ inputs.seconds_before_capture }}
         run: |
-          APP=$(find build-sim -name "*.app" -path "*Release-iphonesimulator*" | head -1)
+          # JUCE puts the bundle under Release/Standalone regardless of SDK, so
+          # do not look for an "iphonesimulator" folder — there isn't one.
+          APP=$(find build-sim -name "*.app" -type d | head -1)
           [ -n "$APP" ] || { echo "::error::no .app was produced"; find build-sim -name "*.app" | head; exit 1; }
           echo "App: $APP"
           BUNDLE=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$APP/Info.plist")
