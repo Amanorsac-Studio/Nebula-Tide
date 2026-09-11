@@ -10,7 +10,7 @@ on:
 # asset and every job pulls it. Which release, and which file in it:
 env:
   SOUNDS_TAG: v1.0.0
-  SOUNDS_ASSET: NebulaTide-Sounds-1.1.0.zip
+  SOUNDS_ASSET: NebulaTide-Sounds-2.0.0.zip
 
 # Read-only by default; the release job asks for write on its own.
 permissions:
