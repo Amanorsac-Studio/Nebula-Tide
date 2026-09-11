@@ -517,9 +517,16 @@ jobs:
                        --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID"
           rm -f "$ASC_KEY_FILE"
 
+      # always(), because the useful output of this job is the build, and the
+      # step above fails for reasons that have nothing to do with it: a missing
+      # App Store record, a certificate secret that will not decode, an SDK
+      # Apple has just deprecated. Every one of those has happened here, and
+      # each time a perfectly good build was thrown away with the job.
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: NebulaTide-iOS
+          if-no-files-found: warn
           path: |
             build-ios/NebulaTide_artefacts/Release/Standalone
             ipa/*.ipa
