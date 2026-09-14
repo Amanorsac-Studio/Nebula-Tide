@@ -717,7 +717,14 @@ NebulaTideEditor::NebulaTideEditor (NebulaTideProcessor& p)
 
     setWantsKeyboardFocus (true);   // piano-key control: A W S E D F T G Y H U J
     setResizable (true, true);
+   #if JUCE_IOS || JUCE_ANDROID
+    // A phone in landscape is about 430 points tall. The desktop minimum of
+    // 660 below stopped the editor shrinking to fit, so the bottom third of
+    // the interface - keys, reverb, volume and pan - hung off the screen.
+    setResizeLimits (320, 320, 4096, 4096);
+   #else
     setResizeLimits (900, 660, 1920, 1200);
+   #endif
     setSize (1100, 780);
     startTimerHz (60);
 }
@@ -1346,8 +1353,13 @@ void NebulaTideEditor::resized()
     }
     auto area = getLocalBounds();
 
+    // Short screens - a phone in landscape - get tighter rows. Only the space
+    // between things shrinks; the text keeps its size, so nothing becomes
+    // unreadable the way it would if the whole desktop layout were scaled.
+    const bool compact = getHeight() < 600;
+
     // header
-    auto header = area.removeFromTop (64).reduced (26, 10);
+    auto header = area.removeFromTop (compact ? 46 : 64).reduced (26, compact ? 6 : 10);
     title.setBounds (header.removeFromLeft (280));
     settingsBtn.setBounds (header.removeFromRight (86));
     header.removeFromRight (6);
@@ -1386,15 +1398,17 @@ void NebulaTideEditor::resized()
     presetLabel.setBounds (nav);
 
     // footer
-    auto footer = area.removeFromBottom (170).reduced (40, 20);
+    auto footer = compact ? area.removeFromBottom (112).reduced (28, 8)
+                          : area.removeFromBottom (170).reduced (40, 20);
+    const int knob = compact ? 76 : 116;
 
-    auto volArea = footer.removeFromLeft (150);
+    auto volArea = footer.removeFromLeft (compact ? 110 : 150);
     volumeLabel.setBounds (volArea.removeFromBottom (16));
-    volumeKnob.setBounds (volArea.withSizeKeepingCentre (116, 116));
+    volumeKnob.setBounds (volArea.withSizeKeepingCentre (knob, knob));
 
-    auto panArea = footer.removeFromRight (150);
+    auto panArea = footer.removeFromRight (compact ? 110 : 150);
     panLabel.setBounds (panArea.removeFromBottom (16));
-    panKnob.setBounds (panArea.withSizeKeepingCentre (116, 116));
+    panKnob.setBounds (panArea.withSizeKeepingCentre (knob, knob));
 
     // middle: reverb block (left) + crossfade (right)
     auto middle = footer.reduced (24, 0);
@@ -1430,18 +1444,23 @@ void NebulaTideEditor::resized()
     // the whole effect from silent to cascading, so it wants presence rather
     // than a slider buried among the reverb trims.
     {
-        auto keyRow = area.removeFromBottom (zoneKeyboard.isVisible() ? 100 : 110).reduced (30, 0);
-        auto shimArea = keyRow.removeFromRight (112);
+        const int keyRowH = compact ? 74 : (zoneKeyboard.isVisible() ? 100 : 110);
+        auto keyRow = area.removeFromBottom (keyRowH).reduced (30, 0);
+        auto shimArea = keyRow.removeFromRight (compact ? 80 : 112);
         shimLabel.setBounds (shimArea.removeFromBottom (16));
-        shimSlider.setBounds (shimArea.withSizeKeepingCentre (86, 86));
+        const int shimKnob = compact ? 56 : 86;
+        shimSlider.setBounds (shimArea.withSizeKeepingCentre (shimKnob, shimKnob));
         keyPlanets.setBounds (keyRow);
     }
 
     // FX star (left) and texture star (right) flank the pad grid, sitting
     // slightly above centre
     const int starW = juce::jmin (120, area.getWidth() / 7);
-    const int starH = 150;
-    const int starY = area.getY() + area.getHeight() / 4 - starH / 2;
+    const int starH = compact ? 118 : 150;
+    // On a short screen the quarter-height rule lifted the stars into the
+    // header, so they sit centred in whatever room is left instead.
+    const int starY = compact ? area.getY() + (area.getHeight() - starH) / 2
+                              : area.getY() + area.getHeight() / 4 - starH / 2;
     fxStar.setBounds (area.getX() + 22, starY, starW, starH);
     texStar.setBounds (area.getRight() - starW - 22, starY, starW, starH);
 
