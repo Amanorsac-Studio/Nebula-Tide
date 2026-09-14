@@ -99,7 +99,7 @@ jobs:
             # Boot by UUID, not by name. Names carry a model suffix such as
             # "(M4)" and trimming at the first bracket produced "iPad Pro
             # 13-inch", which simctl rejects as not a device.
-            device=$(xcrun simctl list devices available | grep -E "$pattern" | tail -1 | grep -oE "[0-9A-Fa-f-]{36}")
+            device=$(xcrun simctl list devices available | grep -E "$pattern" | tail -1 | grep -oE "[0-9A-Fa-f-]{36}" || true)
             if [ -z "$device" ]; then
               echo "::warning::no simulator matched $pattern, skipping $label"
               return
@@ -108,23 +108,16 @@ jobs:
             xcrun simctl shutdown all || true
             xcrun simctl boot "$device"
             xcrun simctl bootstatus "$device" -b
-
-            # Turn the device, not the picture. The app is landscape-only, so
-            # on a portrait screen iOS draws it sideways with black bars down
-            # both sides, and rotating the file afterwards keeps the bars and
-            # gives portrait dimensions. A landscape device fills the screen
-            # and lands on the exact size the App Store asks for.
-            open -a Simulator --args -CurrentDeviceUDID "$device"
-            sleep 12
-            osascript -e 'tell application "Simulator" to activate' \
-                      -e 'tell application "System Events" to key code 124 using command down' \
-              || echo "::warning::could not rotate the simulator; this shot may come out portrait"
-            sleep 4
-
             xcrun simctl install "$device" "$APP"
             xcrun simctl launch "$device" "$BUNDLE"
             sleep "${SETTLE:-25}"
             xcrun simctl io "$device" screenshot "shots/${label}.png"
+            # simctl records the screen in the device's native portrait
+            # orientation. The interface fills it edge to edge, so a portrait
+            # file is the landscape app on its side: turn it clockwise.
+            w=$(sips -g pixelWidth "shots/${label}.png" | awk '/pixelWidth/{print $2}')
+            h=$(sips -g pixelHeight "shots/${label}.png" | awk '/pixelHeight/{print $2}')
+            if [ "$h" -gt "$w" ]; then sips -r 90 "shots/${label}.png" >/dev/null; fi
             xcrun simctl shutdown "$device" || true
             echo "captured shots/${label}.png"
           }
@@ -135,7 +128,7 @@ jobs:
           # ...and the two smallest screens the app supports, which are where
           # layout breaks first. Not for the store; for checking. An iPhone SE
           # in landscape is about 375 points tall and an iPad mini about 744.
-          shoot iphone-smallest 'iPhone SE'
+          shoot iphone-smallest 'iPhone (SE|1[0-9]e)'
           shoot ipad-smallest   'iPad mini'
 
           # A fallback if the patterns above matched nothing on this image.

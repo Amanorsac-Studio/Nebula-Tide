@@ -553,6 +553,12 @@ private:
     juce::ThreadPool updatePool { 1 };
     void checkForUpdate();
 
+    // The part of the screen controls may occupy. On phones and iPads that
+    // excludes the Dynamic Island, notch and home indicator; the background
+    // still draws edge to edge. On desktop it is simply the whole editor.
+    juce::Rectangle<int> contentBounds() const;
+    juce::BorderSize<int> appliedSafeArea;   // last insets laid out for
+
     juce::TextButton settingsBtn { "SETTINGS" };
     juce::TextButton studioBtn { "STUDIO" };   // the preset dashboard
     juce::TextButton keysBtn { "KEYS" };       // show/hide the zoned keyboard strip

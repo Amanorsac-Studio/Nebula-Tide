@@ -1268,6 +1268,17 @@ bool NebulaTideEditor::keyPressed (const juce::KeyPress& k)
 
 void NebulaTideEditor::timerCallback()
 {
+   #if JUCE_IOS || JUCE_ANDROID
+    // Turning the phone round moves the Dynamic Island to the other edge
+    // without changing the window's size, so resized() is never called for it.
+    if (auto* display = juce::Desktop::getInstance().getDisplays().getDisplayForRect (getScreenBounds()))
+        if (display->safeAreaInsets != appliedSafeArea)
+        {
+            appliedSafeArea = display->safeAreaInsets;
+            resized();
+        }
+   #endif
+
     if (betaExpired())
     {
         // curtain down: silence and disable everything, repaint the notice
@@ -1343,6 +1354,16 @@ void NebulaTideEditor::showMainViewIfLicensed()
     repaint();
 }
 
+juce::Rectangle<int> NebulaTideEditor::contentBounds() const
+{
+    auto r = getLocalBounds();
+   #if JUCE_IOS || JUCE_ANDROID
+    if (auto* display = juce::Desktop::getInstance().getDisplays().getDisplayForRect (getScreenBounds()))
+        r = display->safeAreaInsets.subtractedFrom (r);
+   #endif
+    return r;
+}
+
 void NebulaTideEditor::resized()
 {
     background.setBounds (getLocalBounds());
@@ -1351,12 +1372,15 @@ void NebulaTideEditor::resized()
         activation->setBounds (getLocalBounds());
         activation->toFront (false);
     }
-    auto area = getLocalBounds();
+    // Controls stay clear of the Dynamic Island and home indicator; the
+    // background above is still laid edge to edge.
+    const auto safe = contentBounds();
+    auto area = safe;
 
     // Short screens - a phone in landscape - get tighter rows. Only the space
     // between things shrinks; the text keeps its size, so nothing becomes
     // unreadable the way it would if the whole desktop layout were scaled.
-    const bool compact = getHeight() < 600;
+    const bool compact = safe.getHeight() < 600;
 
     // header
     auto header = area.removeFromTop (compact ? 46 : 64).reduced (26, compact ? 6 : 10);
@@ -1378,13 +1402,13 @@ void NebulaTideEditor::resized()
     }
     statusLabel.setBounds (header.removeFromRight (130));
 
-    settingsPanel.setBounds (getLocalBounds().withSizeKeepingCentre (
-        juce::jmin (620, getWidth() - 80), juce::jmin (620, getHeight() - 100)));
+    settingsPanel.setBounds (safe.withSizeKeepingCentre (
+        juce::jmin (620, safe.getWidth() - 80), juce::jmin (620, safe.getHeight() - 100)));
     settingsPanel.toFront (false);
     if (studio != nullptr)
     {
-        studio->setBounds (getLocalBounds().withSizeKeepingCentre (
-            juce::jmin (940, getWidth() - 40), juce::jmin (660, getHeight() - 40)));
+        studio->setBounds (safe.withSizeKeepingCentre (
+            juce::jmin (940, safe.getWidth() - 40), juce::jmin (660, safe.getHeight() - 40)));
         studio->toFront (false);
     }
     if (downloader != nullptr)
