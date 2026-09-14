@@ -129,8 +129,14 @@ jobs:
             echo "captured shots/${label}.png"
           }
 
+          # The two store sizes...
           shoot iphone 'iPhone .*Pro Max'
           shoot ipad   'iPad Pro.*13'
+          # ...and the two smallest screens the app supports, which are where
+          # layout breaks first. Not for the store; for checking. An iPhone SE
+          # in landscape is about 375 points tall and an iPad mini about 744.
+          shoot iphone-smallest 'iPhone SE'
+          shoot ipad-smallest   'iPad mini'
 
           # A fallback if the patterns above matched nothing on this image.
           if [ -z "$(ls -A shots 2>/dev/null)" ]; then
