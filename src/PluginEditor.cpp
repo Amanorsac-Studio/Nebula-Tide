@@ -1384,12 +1384,18 @@ void NebulaTideEditor::resized()
 
     // header
     auto header = area.removeFromTop (compact ? 46 : 64).reduced (26, compact ? 6 : 10);
-    title.setBounds (header.removeFromLeft (280));
-    settingsBtn.setBounds (header.removeFromRight (86));
+    // On a phone the header is the tightest row: the wide-tracked title and
+    // the status word between them left the preset selector no room at all,
+    // squeezing its arrow to a sliver and pushing the preset name out. The
+    // title steps down a size, the status word (decoration) goes, and the
+    // buttons narrow, so the width lands on the thing people actually use.
+    title.setFont (ui::titleFont (compact ? 15.0f : 19.0f));
+    title.setBounds (header.removeFromLeft (compact ? 200 : 280));
+    settingsBtn.setBounds (header.removeFromRight (compact ? 74 : 86));
     header.removeFromRight (6);
-    keysBtn.setBounds (header.removeFromRight (62));
+    keysBtn.setBounds (header.removeFromRight (compact ? 54 : 62));
     header.removeFromRight (6);
-    studioBtn.setBounds (header.removeFromRight (74));
+    studioBtn.setBounds (header.removeFromRight (compact ? 64 : 74));
     if (midiDrag.isVisible())
     {
         header.removeFromRight (6);
@@ -1400,7 +1406,9 @@ void NebulaTideEditor::resized()
         header.removeFromRight (6);
         updateBtn.setBounds (header.removeFromRight (130));
     }
-    statusLabel.setBounds (header.removeFromRight (130));
+    statusLabel.setVisible (! compact);
+    if (! compact)
+        statusLabel.setBounds (header.removeFromRight (130));
 
     settingsPanel.setBounds (safe.withSizeKeepingCentre (
         juce::jmin (620, safe.getWidth() - 80), juce::jmin (620, safe.getHeight() - 100)));

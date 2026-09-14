@@ -108,6 +108,12 @@ jobs:
             xcrun simctl shutdown all || true
             xcrun simctl boot "$device"
             xcrun simctl bootstatus "$device" -b
+            # Open the Simulator window on this device. A headless simulator
+            # never rotates for a landscape-only app: an iPad shows it shrunk
+            # inside a portrait screen, and phones land the other way up. The
+            # window is what turns the device to face the app.
+            open -a Simulator --args -CurrentDeviceUDID "$device"
+            sleep 12
             xcrun simctl install "$device" "$APP"
             xcrun simctl launch "$device" "$BUNDLE"
             sleep "${SETTLE:-25}"
