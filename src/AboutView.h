@@ -135,9 +135,14 @@ private:
             t << "    " << c << "\n";
 
         t << "\nLICENCE\n"
-          << "Nebula Tide and its sound library are \xc2\xa9 Amanorsac Studio.\n"
-          << "Your licence covers use on two machines; move one from My Apps at\n"
+          << "Nebula Tide and its sound library are \xc2\xa9 Amanorsac Studio.\n";
+       #if NEBULA_REQUIRE_LICENSE
+        // Not on the App Store build: it has no key to move, and pointing a
+        // store customer at a website to manage a purchase is the kind of
+        // thing App Review rejects.
+        t << "Your licence covers use on two machines; move one from My Apps at\n"
           << "amanorsac.studio, or use DEACTIVATE THIS DEVICE in Settings.\n";
+       #endif
         return t;
     }
 

@@ -365,6 +365,10 @@ public:
         manualAtt = std::make_unique<BtAtt> (processor.apvts, "shimmanual", manualBtn);
 
 
+       #if NEBULA_REQUIRE_LICENSE
+        // Only where a licence exists. The App Store build is sold through the
+        // store and has no key, so this section would read "Not activated" to
+        // every buyer and to the reviewer.
         smallCaps (licenseHeading, "LICENSE");
         licenseStatus.setFont (ui::bodyFont (10.5f));
         licenseStatus.setColour (juce::Label::textColourId, colours::textDim);
@@ -380,6 +384,7 @@ public:
             });
         };
         addAndMakeVisible (deactivateBtn);
+       #endif
 
         smallCaps (soundsHeading, "SOUND LIBRARY");
         soundsPath.setFont (ui::bodyFont (10.5f));

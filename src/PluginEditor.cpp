@@ -527,7 +527,12 @@ NebulaTideEditor::NebulaTideEditor (NebulaTideProcessor& p)
         if (updatePageUrl.isNotEmpty()) juce::URL (updatePageUrl).launchInDefaultBrowser();
     };
     addChildComponent (updateBtn);
+   #if ! (JUCE_IOS || JUCE_ANDROID)
+    // Desktop only. Store builds are updated by the store, and an in-app
+    // button sending a phone user to a website for a new version is exactly
+    // what App Review turns down.
     checkForUpdate();
+   #endif
 
     showMainViewIfLicensed();
     keysBtn.setColour (juce::TextButton::textColourOffId, colours::textDim);
@@ -1115,9 +1120,11 @@ void SettingsPanel::resized()
     labelledRow (densityLabel, densitySlider);
     labelledRow (pitchLabel, pitchBox);
     area.removeFromTop (10);
+   #if NEBULA_REQUIRE_LICENSE
     licenseHeading.setBounds (area.removeFromTop (16));
     licenseStatus.setBounds (area.removeFromTop (18));
     deactivateBtn.setBounds (area.removeFromTop (26).removeFromLeft (220).reduced (0, 2));
+   #endif
     area.removeFromTop (10);
     soundsHeading.setBounds (area.removeFromTop (16));
     soundsPath.setBounds (area.removeFromTop (18));
