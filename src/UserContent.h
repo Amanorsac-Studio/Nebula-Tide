@@ -99,4 +99,75 @@ inline juce::Array<Scanned> scanFolder (const juce::File& dir)
     return out;
 }
 
+//==============================================================================
+// ── Matching a folder of stems to keys ───────────────────────────────────
+// For importing a whole folder at once. The filenames already say which key
+// each stem is in, so the app guesses and the person only corrects the
+// guesses, rather than assigning twelve files one by one. Every match here is
+// a suggestion shown in a list, never applied without being seen.
+
+// The key a filename names, or -1. Looks at the last word first, then the
+// first, so "Aurora_Veil_Db", "Preset 1 - E" and "Bb Warm Pad" all resolve,
+// while a bounce stray like "Preset 2 - A Output Audio Bus L" finds nothing.
+inline int detectKey (const juce::String& stem)
+{
+    auto tokens = juce::StringArray::fromTokens (stem.replaceCharacters ("_-", "  "), " ", "");
+    tokens.removeEmptyStrings();
+    if (tokens.isEmpty())
+        return -1;
+
+    if (const int k = parseKeyToken (tokens[tokens.size() - 1]); k >= 0)
+        return k;
+
+    if (tokens.size() > 1)
+        if (const int k = parseKeyToken (tokens[0]); k >= 0)
+            return k;
+
+    return -1;
+}
+
+struct FolderMatch
+{
+    juce::Array<juce::File> files;   // every audio file in the folder, sorted
+    juce::File keys[12];             // the suggested file for each key
+    juce::String suggestedName;      // the preset name the files share
+
+    int numMatched() const
+    {
+        int n = 0;
+        for (const auto& k : keys) if (k.existsAsFile()) ++n;
+        return n;
+    }
+};
+
+inline FolderMatch matchFolder (const juce::File& dir)
+{
+    FolderMatch m;
+    if (! dir.isDirectory())
+        return m;
+
+    m.files = dir.findChildFiles (juce::File::findFiles, false,
+                                  "*.wav;*.mp3;*.ogg;*.flac;*.aiff;*.aif");
+    m.files.sort();
+
+    for (const auto& f : m.files)
+    {
+        const int k = detectKey (f.getFileNameWithoutExtension());
+        // First file in name order claims a key, so a second take of the same
+        // key stays available in the list instead of silently replacing it.
+        if (k < 0 || m.keys[k].existsAsFile())
+            continue;
+
+        m.keys[k] = f;
+        if (m.suggestedName.isEmpty())
+        {
+            juce::String name;
+            int unused = 0;
+            splitNameAndKey (f.getFileNameWithoutExtension(), name, unused);
+            m.suggestedName = name;
+        }
+    }
+    return m;
+}
+
 } // namespace usercontent

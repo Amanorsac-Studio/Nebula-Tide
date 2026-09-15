@@ -55,7 +55,7 @@ PresetStudio::PresetStudio (NebulaTideProcessor& p, std::function<void()> onChan
 
     cap (nameLabel,   "PRESET NAME");
     cap (colourLabel, "COLOUR");
-    cap (keysLabel,   "KEYS  -  drop an audio file on each key you have");
+    cap (keysLabel,   "KEYS  -  drop audio on a key, click one to browse, or import a whole folder");
     cap (auxLabel,    "YOUR FX AND TEXTURES");
 
     message.setFont (ui::bodyFont (11.0f));
@@ -74,6 +74,28 @@ PresetStudio::PresetStudio (NebulaTideProcessor& p, std::function<void()> onChan
             [this] (int k) { browseForSlot (k); },
             [this] (int, juce::File) { repaint(); }));
     for (auto* s : slots) addAndMakeVisible (s);
+
+    folderImport = std::make_unique<FolderImport> (
+        [this] (const std::array<juce::File, 12>& keys, const juce::String& name)
+        {
+            int filled = 0;
+            for (int k = 0; k < 12; ++k)
+                if (keys[(size_t) k].existsAsFile())
+                {
+                    slots[k]->setFile (keys[(size_t) k]);
+                    ++filled;
+                }
+            // Only suggest a name; never overwrite one the person already typed.
+            if (nameBox.getText().trim().isEmpty() && name.isNotEmpty())
+                nameBox.setText (name, juce::dontSendNotification);
+            say ("Imported " + juce::String (filled) + (filled == 1 ? " key." : " keys.")
+                   + " Choose a colour and save.", false);
+            repaint();
+        });
+    addChildComponent (*folderImport);
+
+    importFolderBtn.onClick = [this] { chooseFolderToImport(); };
+    addAndMakeVisible (importFolderBtn);
 
     for (auto hex : { 0xff4fe3ff, 0xffff4dbe, 0xff9b5cff, 0xffff8c2a,
                       0xff1e4dff, 0xff3ddc97, 0xffffc96b, 0xffff5a6e })
@@ -273,6 +295,24 @@ juce::String PresetStudio::uniqueUserName (const juce::String& wanted) const
         if (! taken (candidate)) return candidate;
     }
     return wanted + " " + juce::String (juce::Random::getSystemRandom().nextInt (9999));
+}
+
+void PresetStudio::chooseFolderToImport()
+{
+    chooser = std::make_unique<juce::FileChooser> (
+        "Choose the folder of stems for this preset",
+        juce::File::getSpecialLocation (juce::File::userMusicDirectory));
+
+    chooser->launchAsync (juce::FileBrowserComponent::openMode
+                            | juce::FileBrowserComponent::canSelectDirectories,
+        [this] (const juce::FileChooser& fc)
+        {
+            const auto dir = fc.getResult();
+            if (! dir.isDirectory())
+                return;
+            folderImport->setBounds (getLocalBounds().reduced (40, 30));
+            folderImport->show (dir);
+        });
 }
 
 void PresetStudio::showAuxLibrary()
@@ -615,7 +655,13 @@ void PresetStudio::resized()
     }
     area.removeFromTop (14);
 
-    keysLabel.setBounds (area.removeFromTop (18));
+    {
+        auto keysRow = area.removeFromTop (22);
+        importFolderBtn.setBounds (keysRow.removeFromRight (150).reduced (0, 1));
+        keysLabel.setBounds (keysRow);
+    }
+    if (folderImport != nullptr && folderImport->isVisible())
+        folderImport->setBounds (getLocalBounds().reduced (40, 30));
     area.removeFromTop (4);
 
     auto grid = area.removeFromTop (juce::jmax (120, area.getHeight() - 128));

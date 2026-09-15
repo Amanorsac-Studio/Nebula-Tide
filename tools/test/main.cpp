@@ -772,6 +772,47 @@ static void testDeleteMatching()
     dir.deleteRecursively();
 }
 
+//==============================================================================
+// Importing a folder guesses each stem's key from its name. A wrong guess puts
+// a pad in the wrong key without anyone noticing, so the guessing is pinned.
+static void testFolderMatch()
+{
+    std::cout << "\n-- matching a folder of stems to keys --" << std::endl;
+
+    check (usercontent::detectKey ("Aurora_Veil_Db") == 1, "the key at the end of a name is found");
+    check (usercontent::detectKey ("Preset 1 - E") == 4, "a key after a dash is found");
+    check (usercontent::detectKey ("Pad F#") == 6, "a sharp is read as its key");
+    check (usercontent::detectKey ("Bb Warm Pad") == 10, "a key at the start is found when the end has none");
+    check (usercontent::detectKey ("Preset 2 - A Output Audio Bus L") == -1,
+           "a bounce stray is not mistaken for a key");
+    check (usercontent::detectKey ("Rain Loop") == -1, "a name with no key gives no key");
+
+    auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                   .getChildFile ("NebulaFolderMatchTest");
+    dir.deleteRecursively();
+    dir.createDirectory();
+    for (const char* n : { "Aurora_Veil_C.aif", "Aurora_Veil_Db.aif", "Aurora_Veil_E.aif",
+                           "Other_E.wav", "Stray Output L.aif", "notes.txt" })
+        dir.getChildFile (n).replaceWithData ("x", 1);
+
+    const auto m = usercontent::matchFolder (dir);
+    check (m.files.size() == 5, "every audio file is listed, the text file is not",
+           juce::String (m.files.size()));
+    check (m.keys[0].getFileName() == "Aurora_Veil_C.aif", "C gets the C file", m.keys[0].getFileName());
+    check (m.keys[1].getFileName() == "Aurora_Veil_Db.aif", "Db gets the Db file", m.keys[1].getFileName());
+    check (m.keys[4].getFileName() == "Aurora_Veil_E.aif",
+           "when two files name the same key, the first in name order is suggested",
+           m.keys[4].getFileName());
+    check (m.numMatched() == 3, "three keys matched, the stray left for the person",
+           juce::String (m.numMatched()));
+    check (m.suggestedName == "Aurora Veil", "the preset name is taken from the files", m.suggestedName);
+
+    check (usercontent::matchFolder (dir.getChildFile ("missing")).files.isEmpty(),
+           "a folder that does not exist gives an empty match");
+
+    dir.deleteRecursively();
+}
+
 static void testPresetSharing()
 {
     std::cout << "\n-- preset sharing --" << std::endl;
@@ -959,6 +1000,7 @@ int main()
     testCredits();
     testPresetSharing();
     testDeleteMatching();
+    testFolderMatch();
     std::cout << "\n" << (failures == 0 ? "ALL PASSED" : juce::String (failures) + " FAILED").toStdString()
               << std::endl;
     return failures == 0 ? 0 : 1;

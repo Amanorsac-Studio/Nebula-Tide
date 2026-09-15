@@ -2,6 +2,7 @@
 #include "PluginProcessor.h"
 #include "PresetShare.h"
 #include "AuxLibrary.h"
+#include "FolderImport.h"
 
 // Declared without the default argument: PluginEditor.h declares the same
 // function with one, and a default may only be given once per translation unit.
@@ -54,7 +55,15 @@ public:
     {
         hovering = false;
         for (const auto& f : files)
-            if (isAudio (f)) { if (dropped) dropped (key, juce::File (f)); break; }
+            if (isAudio (f))
+            {
+                // Fill the slot itself. This used to only report the drop to
+                // Studio, whose handler just repaints, so a drop reached the slot
+                // and was thrown away. Browsing worked because it set the file.
+                setFile (juce::File (f));
+                if (dropped) dropped (key, juce::File (f));
+                break;
+            }
         repaint();
     }
 
@@ -118,6 +127,7 @@ private:
     void browseForSlot (int key);
     void importAux (int cat);
     void showAuxLibrary();
+    void chooseFolderToImport();
     void refreshAuxChoices();
     void sharePreset();          // write the open preset out as one .ntpreset
     void importPack();           // read someone else's .ntpreset in
@@ -147,6 +157,11 @@ private:
     juce::Label    fxLabel, texLabel;
     juce::ComboBox fxBox, texBox;
     std::unique_ptr<AuxLibrary> auxLibrary;
+
+    // Fill all twelve keys from one folder, with the keys guessed from the
+    // file names and shown for checking before anything is imported.
+    juce::TextButton importFolderBtn { "IMPORT FOLDER..." };
+    std::unique_ptr<FolderImport> folderImport;
     juce::Viewport listView;
     juce::Component listHolder;
     juce::OwnedArray<juce::TextButton> listButtons;
