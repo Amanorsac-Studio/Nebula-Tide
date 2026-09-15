@@ -1391,7 +1391,7 @@ void NebulaTideEditor::resized()
     // buttons narrow, so the width lands on the thing people actually use.
     title.setFont (ui::titleFont (compact ? 15.0f : 19.0f));
     title.setBounds (header.removeFromLeft (compact ? 200 : 280));
-    settingsBtn.setBounds (header.removeFromRight (compact ? 74 : 86));
+    settingsBtn.setBounds (header.removeFromRight (86));
     header.removeFromRight (6);
     keysBtn.setBounds (header.removeFromRight (compact ? 54 : 62));
     header.removeFromRight (6);
@@ -1424,7 +1424,8 @@ void NebulaTideEditor::resized()
         downloader->setBounds (getLocalBounds());
         downloader->toFront (false);
     }
-    auto nav = header.withSizeKeepingCentre (juce::jmin (440, header.getWidth()), 36);
+    const auto navRoom = compact ? header.reduced (10, 0) : header;
+    auto nav = navRoom.withSizeKeepingCentre (juce::jmin (440, navRoom.getWidth()), 36);
     prevBtn.setBounds (nav.removeFromLeft (40));
     nextBtn.setBounds (nav.removeFromRight (40));
     presetLabel.setBounds (nav);

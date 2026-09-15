@@ -108,12 +108,15 @@ jobs:
             xcrun simctl shutdown all || true
             xcrun simctl boot "$device"
             xcrun simctl bootstatus "$device" -b
-            # Open the Simulator window on this device. A headless simulator
-            # never rotates for a landscape-only app: an iPad shows it shrunk
-            # inside a portrait screen, and phones land the other way up. The
-            # window is what turns the device to face the app.
+            # Rotate the device to landscape before the app starts. Without it an
+            # iPad letterboxes the landscape-only app inside a portrait screen,
+            # and a phone turns the interface the other way up. The keystroke
+            # prints nothing when it works, which is why it once looked broken
+            # and was removed; every capture since came out wrong.
             open -a Simulator --args -CurrentDeviceUDID "$device"
             sleep 12
+            osascript -e 'tell application "Simulator" to activate' -e 'tell application "System Events" to key code 124 using command down' || echo "::warning::could not rotate the simulator; this shot may come out sideways"
+            sleep 4
             xcrun simctl install "$device" "$APP"
             xcrun simctl launch "$device" "$BUNDLE"
             sleep "${SETTLE:-25}"
