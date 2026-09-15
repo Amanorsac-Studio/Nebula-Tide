@@ -107,4 +107,7 @@ Name: "{group}\{#AppName}"; Filename: "{app}\Nebula Tide V2.exe"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\Nebula Tide V2.exe"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\Nebula Tide V2.exe"; Description: "Launch {#AppName}"; Flags: nowait postinstall skipifsilent
+; runasoriginaluser: setup runs as administrator, and without this flag the app
+; launched from the final page inherits that, and Windows silently refuses
+; drag and drop from Explorer (a normal-rights process) into an elevated window.
+Filename: "{app}\Nebula Tide V2.exe"; Description: "Launch {#AppName}"; Flags: nowait postinstall skipifsilent runasoriginaluser
