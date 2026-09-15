@@ -8,12 +8,34 @@
 #include "../../src/NtLibrary.h"
 #include <juce_audio_formats/juce_audio_formats.h>
 
-// Returns the file's bytes, transcoded to Ogg Vorbis when requested.
-static juce::MemoryBlock loadEntry (const juce::File& f, int oggQuality, juce::String& nameInOut)
+// How each entry is stored in the container.
+//   raw   keep the source bytes exactly
+//   flac  lossless, but compressed - the right default for desktop, because
+//         an AIFF bounce is uncompressed PCM and roughly doubles the download
+//         for no gain in quality
+//   ogg   lossy, for mobile where the store size limits bite
+enum class Encode { raw, flac, ogg };
+
+// Returns the file's bytes, transcoded as requested.
+static juce::MemoryBlock loadEntry (const juce::File& f, Encode mode, int oggQuality,
+                                    juce::String& nameInOut)
 {
     juce::MemoryBlock out;
 
-    if (oggQuality < 0 || f.getFileName().equalsIgnoreCase ("manifest.json"))
+    if (mode == Encode::raw || f.getFileName().equalsIgnoreCase ("manifest.json"))
+    {
+        f.loadFileAsData (out);
+        return out;
+    }
+
+    // Already in the target format: copying the bytes beats decoding and
+    // re-encoding them, which would only lose quality.
+    if (mode == Encode::flac && f.hasFileExtension ("flac"))
+    {
+        f.loadFileAsData (out);
+        return out;
+    }
+    if (mode == Encode::ogg && f.hasFileExtension ("ogg"))
     {
         f.loadFileAsData (out);
         return out;
@@ -27,22 +49,30 @@ static juce::MemoryBlock loadEntry (const juce::File& f, int oggQuality, juce::S
     juce::AudioBuffer<float> buf ((int) reader->numChannels, (int) reader->lengthInSamples);
     reader->read (&buf, 0, (int) reader->lengthInSamples, 0, true, true);
 
-    juce::OggVorbisAudioFormat ogg;
     auto stream = std::make_unique<juce::MemoryOutputStream> (out, false);
-    std::unique_ptr<juce::AudioFormatWriter> writer (
-        ogg.createWriterFor (stream.get(), reader->sampleRate, (unsigned int) buf.getNumChannels(),
-                             16, {}, oggQuality));
+    std::unique_ptr<juce::AudioFormatWriter> writer;
+
+    juce::OggVorbisAudioFormat ogg;
+    juce::FlacAudioFormat flac;
+    if (mode == Encode::ogg)
+        writer.reset (ogg.createWriterFor (stream.get(), reader->sampleRate,
+                                           (unsigned int) buf.getNumChannels(), 16, {}, oggQuality));
+    else
+        writer.reset (flac.createWriterFor (stream.get(), reader->sampleRate,
+                                            (unsigned int) buf.getNumChannels(), 24, {}, 5));
+
     if (writer == nullptr) { f.loadFileAsData (out); return out; }
     stream.release();   // the writer owns it now
 
     writer->writeFromAudioSampleBuffer (buf, 0, buf.getNumSamples());
     writer.reset();     // flush
 
-    nameInOut = nameInOut.upToLastOccurrenceOf (".", false, false) + ".ogg";
+    nameInOut = nameInOut.upToLastOccurrenceOf (".", false, false)
+              + (mode == Encode::ogg ? ".ogg" : ".flac");
     return out;
 }
 
-static int pack (const juce::File& dir, const juce::File& out, int oggQuality)
+static int pack (const juce::File& dir, const juce::File& out, Encode mode, int oggQuality)
 {
     if (! dir.isDirectory())
     {
@@ -54,8 +84,10 @@ static int pack (const juce::File& dir, const juce::File& out, int oggQuality)
     for (auto& f : dir.findChildFiles (juce::File::findFiles, true))
     {
         const auto ext = f.getFileExtension().toLowerCase();
+        // ".aif" matters: Studio One bounces use it, and leaving it out here
+        // dropped 36 files from the container without a word of complaint.
         if (ext == ".flac" || ext == ".wav" || ext == ".mp3" || ext == ".ogg"
-            || ext == ".aiff" || f.getFileName() == "manifest.json")
+            || ext == ".aiff" || ext == ".aif" || f.getFileName() == "manifest.json")
             files.add (f);
     }
     files.sort();
@@ -68,7 +100,7 @@ static int pack (const juce::File& dir, const juce::File& out, int oggQuality)
     for (auto& f : files)
     {
         auto name = f.getRelativePathFrom (dir).replaceCharacter ('\\', '/');
-        auto data = loadEntry (f, oggQuality, name);
+        auto data = loadEntry (f, mode, oggQuality, name);
         if (data.getSize() == 0) { std::cerr << "cannot read " << f.getFullPathName() << "\n"; return 1; }
         names.add (name);
         blocks.add (std::move (data));
@@ -120,14 +152,20 @@ static int verify (const juce::File& lib)
     int audio = 0, bad = 0, decoded = 0;
     for (const auto& e : r.getEntries())
     {
+        // Every audio format has to be counted, not just the two we happen to
+        // write. Checking only .flac and .ogg meant 36 AIFF entries were packed
+        // and reported as fine without ever being opened.
         const bool isFlac = e.path.endsWithIgnoreCase (".flac");
         const bool isOgg  = e.path.endsWithIgnoreCase (".ogg");
-        if (isFlac || isOgg) ++audio;
+        const bool isAiff = e.path.endsWithIgnoreCase (".aif") || e.path.endsWithIgnoreCase (".aiff");
+        const bool isWav  = e.path.endsWithIgnoreCase (".wav");
+        if (isFlac || isOgg || isAiff || isWav) ++audio;
         const auto block = r.read (e);
         if ((juce::int64) block.getSize() != e.size) { ++bad; continue; }
         // decrypted audio must start with its format's signature
         const auto sig = juce::String::fromUTF8 ((const char*) block.getData(), 4);
-        if ((isFlac && sig != "fLaC") || (isOgg && sig != "OggS"))
+        if ((isFlac && sig != "fLaC") || (isOgg && sig != "OggS")
+            || (isAiff && sig != "FORM") || (isWav && sig != "RIFF"))
             { ++bad; continue; }
 
         // decode a few entries exactly the way the app does, to prove the audio
@@ -160,16 +198,24 @@ int main (int argc, char* argv[])
 
     if (argc < 3)
     {
-        std::cerr << "usage: NebulaPack <presetsFolder> <out.ntlib> [--ogg <quality 0-10>]\n"
+        std::cerr << "usage: NebulaPack <presetsFolder> <out.ntlib> [--ogg <quality 0-10>] [--raw]\n"
                      "       NebulaPack --verify <out.ntlib>\n";
         return 2;
     }
 
-    int oggQuality = -1;   // -1 = keep source format (lossless FLAC)
+    // Desktop defaults to FLAC rather than raw: lossless either way, but an
+    // uncompressed AIFF bounce is about twice the size for nothing.
+    Encode mode = Encode::flac;
+    int oggQuality = -1;
     for (int i = 3; i < argc - 1; ++i)
         if (juce::String (argv[i]) == "--ogg")
+        {
+            mode = Encode::ogg;
             oggQuality = juce::String (argv[i + 1]).getIntValue();
+        }
+        else if (juce::String (argv[i]) == "--raw")
+            mode = Encode::raw;
 
     return pack (juce::File (juce::String::fromUTF8 (argv[1])),
-                 juce::File (juce::String::fromUTF8 (argv[2])), oggQuality);
+                 juce::File (juce::String::fromUTF8 (argv[2])), mode, oggQuality);
 }
