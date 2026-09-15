@@ -6,6 +6,16 @@ on:
     tags: ["v*"]
     branches: ["ci-*"]     # test builds without creating a release
 
+# The sound library is too large to keep in the repo, so it lives as a release
+# asset and every job pulls it. Which release, and which file in it:
+env:
+  SOUNDS_TAG: v1.0.0
+  SOUNDS_ASSET: NebulaTide-Sounds-2.0.0.zip
+
+# Read-only by default; the release job asks for write on its own.
+permissions:
+  contents: read
+
 jobs:
   # ──────────────────────────────────────────────────────────────────────────
   windows:
@@ -27,22 +37,43 @@ jobs:
       - name: Fetch sound library
         shell: pwsh
         env:
-          SOUNDS_URL: ${{ endsWith(vars.SOUNDS_URL, '.zip') && vars.SOUNDS_URL || 'https://github.com/amanorsac/Nebula-Tide/releases/download/v1.0.0/NebulaTide-Sounds-1.1.0.zip' }}
+          # Only an override. Left empty, the library comes from this repo's own
+          # release, which is the normal path.
+          SOUNDS_URL: ${{ endsWith(vars.SOUNDS_URL, '.zip') && vars.SOUNDS_URL || '' }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          "Downloading $env:SOUNDS_URL"
-          # Try the configured URL, then the known-good release asset; retry each on any error.
-          $urls = @($env:SOUNDS_URL, "https://github.com/amanorsac/Nebula-Tide/releases/download/v1.0.0/NebulaTide-Sounds-1.1.0.zip") | Select-Object -Unique
+          # The library lives on a release rather than in the repo. gh is
+          # preinstalled on every runner and uses GITHUB_TOKEN, so it can read
+          # our own releases even though this repo is private, and it addresses
+          # the repo it is running in, so it survives a rename or a move to the
+          # org. An unauthenticated curl cannot do either: it gets a 404 that
+          # looks exactly like a missing file.
+          #
+          # SOUNDS_URL is tried first when set, but it is only a preference. A
+          # stale one falls through to the release instead of failing the build
+          # — that variable outlived the repo it pointed at once already, and
+          # took every platform down with it.
+          function Test-Big { (Test-Path sounds.zip) -and (Get-Item sounds.zip).Length -gt 100MB }
           $ok = $false
-          foreach ($u in $urls) {
-            foreach ($attempt in 1..4) {
-              "Downloading $u (attempt $attempt)"
-              curl.exe -L --fail --retry 3 --retry-all-errors --retry-delay 5 -o sounds.zip "$u"
-              if ($LASTEXITCODE -eq 0 -and (Test-Path sounds.zip) -and (Get-Item sounds.zip).Length -gt 100MB) { $ok = $true; break }
-              Remove-Item sounds.zip -ErrorAction SilentlyContinue; Start-Sleep 8
+          if ($env:SOUNDS_URL) {
+            foreach ($attempt in 1..3) {
+              "Downloading $env:SOUNDS_URL (attempt $attempt)"
+              curl.exe -L --fail --retry 2 --retry-all-errors --retry-delay 5 -o sounds.zip "$env:SOUNDS_URL"
+              if ($LASTEXITCODE -eq 0 -and (Test-Big)) { $ok = $true; break }
+              Remove-Item sounds.zip -ErrorAction SilentlyContinue; Start-Sleep 5
             }
-            if ($ok) { break }
+            if (-not $ok) { "::warning::SOUNDS_URL did not work; using this repo's own release instead" }
           }
-          if (-not $ok) { throw "could not download the sound library (check the SOUNDS_URL repo variable)" }
+          if (-not $ok) {
+            foreach ($attempt in 1..3) {
+              "Downloading $env:SOUNDS_ASSET from release $env:SOUNDS_TAG (attempt $attempt)"
+              gh release download $env:SOUNDS_TAG --repo $env:GITHUB_REPOSITORY `
+                 --pattern $env:SOUNDS_ASSET --output sounds.zip --clobber
+              if ($LASTEXITCODE -eq 0 -and (Test-Big)) { $ok = $true; break }
+              Remove-Item sounds.zip -ErrorAction SilentlyContinue; Start-Sleep 5
+            }
+          }
+          if (-not $ok) { throw "could not download $env:SOUNDS_ASSET from release $env:SOUNDS_TAG; set the SOUNDS_URL repo variable to pull it from somewhere else" }
           $mb = [math]::Round((Get-Item sounds.zip).Length / 1MB, 1)
           "Downloaded $mb MB"
           # bsdtar reads every zip flavour (Expand-Archive chokes on some)
@@ -64,16 +95,21 @@ jobs:
       - name: Build installer
         shell: pwsh
         run: |
-          $v = "${{ github.ref_name }}".TrimStart("v")
-          if (-not $v.StartsWith("1")) { $v = "1.0.0" }
+          # CMakeLists.txt is the one place the version is stated. This used to
+          # read the branch name, so building "v2" produced "2", failed a check
+          # that expected a 1, and silently fell back to 1.0.0 — which is how a
+          # version 2 installer came out labelled 1.0.0.
+          $v = (Select-String -Path CMakeLists.txt -Pattern 'project\(NebulaTide VERSION ([0-9.]+)\)').Matches[0].Groups[1].Value
+          if ("${{ github.ref_type }}" -eq "tag") { $v = "${{ github.ref_name }}".TrimStart("v") }
+          "Building version $v"
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /Q /DAppVersion=$v installer\NebulaTide.iss
 
       - name: Package portable zip
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
-          Compress-Archive -Path "build\NebulaTide_artefacts\Release\Standalone\Nebula Tide.exe","installer\README.txt" -DestinationPath dist\NebulaTide-Windows-App.zip
-          Compress-Archive -Path "build\NebulaTide_artefacts\Release\VST3\Nebula Tide.vst3" -DestinationPath dist\NebulaTide-Windows-VST3.zip
+          Compress-Archive -Path "build\NebulaTide_artefacts\Release\Standalone\Nebula Tide V2.exe","installer\README.txt" -DestinationPath dist\NebulaTide-Windows-App.zip
+          Compress-Archive -Path "build\NebulaTide_artefacts\Release\VST3\Nebula Tide V2.vst3" -DestinationPath dist\NebulaTide-Windows-VST3.zip
           Copy-Item installer\output\*.exe dist\
 
       - uses: actions/upload-artifact@v4
@@ -102,47 +138,147 @@ jobs:
       # Optional codesign + notarize — runs only when signing secrets exist.
       # Repo secrets: MAC_CERT_P12 (base64), MAC_CERT_PASSWORD, APPLE_ID,
       # APPLE_TEAM_ID, APPLE_APP_PASSWORD
+      - name: Fail if macOS signing is not configured
+        if: env.HAS_MAC_SIGNING != 'true'
+        run: |
+          echo "::error::macOS signing is off, so this job would ship an unsigned app. It needs MAC_CERT_P12."
+          exit 1
+
       - name: Sign & notarize
         if: env.HAS_MAC_SIGNING == 'true'
         env:
+          # Every secret arrives through env, never interpolated into the
+          # script. An expression pasted inline would put the certificate into
+          # the command text itself, where line wrapping and log masking can
+          # alter it before base64 ever sees it.
           MAC_CERT_P12: ${{ secrets.MAC_CERT_P12 }}
           MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Notarisation takes either an App Store Connect API key, which is
+          # scoped to the team and revocable on its own, or the older Apple ID
+          # and app-specific password pair. The key is preferred when present.
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
         run: |
-          echo "$MAC_CERT_P12" | base64 -d > cert.p12
-          security create-keychain -p ci ci.keychain
-          security default-keychain -s ci.keychain
-          security unlock-keychain -p ci ci.keychain
-          security import cert.p12 -k ci.keychain -P "$MAC_CERT_PASSWORD" -T /usr/bin/codesign
-          security set-key-partition-list -S apple-tool:,apple: -s -k ci ci.keychain
-          IDENTITY=$(security find-identity -v -p codesigning ci.keychain | awk -F'"' 'NR==1{print $2}')
-          APP="build-mac/NebulaTide_artefacts/Release/Standalone/Nebula Tide.app"
+          # Check the secrets before using them. Without this the only symptom
+          # is "base64: stdin: error decoding base64 input stream", which says
+          # nothing about which secret is wrong or what a right one looks like.
+          # Pasting into the GitHub secret form carries a trailing newline more
+          # often than anyone expects. security import then reports "MAC
+          # verification failed (wrong password?)", which sends you hunting the
+          # certificate when the password is what is wrong. The length is
+          # printed so a password that is empty, or one character longer than
+          # you think, shows up here instead of as a cryptic import failure.
+          MAC_CERT_PASSWORD=$(printf %s "$MAC_CERT_PASSWORD" | tr -d '[:space:]')
+          echo "certificate password length: ${#MAC_CERT_PASSWORD}"
+          P12="$RUNNER_TEMP/cert.p12"
+          fail=0
+          clean=$(printf %s "$MAC_CERT_P12" | tr -d '[:space:]')
+          if ! printf %s "$clean" | base64 --decode > "$P12" 2>/dev/null; then
+            echo "::error::MAC_CERT_P12 is not valid base64 (${#clean} characters after whitespace was stripped). It should be the output of: base64 -i developerID_xxx.p12"
+            fail=1
+          elif [ "$(wc -c < "$P12")" -lt 1000 ]; then
+            echo "::error::MAC_CERT_P12 decodes to only $(wc -c < "$P12") bytes. A Developer ID certificate is a few kilobytes, so this is probably not the .p12 file."
+            fail=1
+          fi
+          [ -n "$MAC_CERT_PASSWORD" ] || { echo "::error::MAC_CERT_PASSWORD is empty. It is the password set when the .p12 was exported from Keychain Access."; fail=1; }
+          [ -n "$APPLE_TEAM_ID" ]     || { echo "::error::APPLE_TEAM_ID is empty. It is the ten-character team identifier."; fail=1; }
+
+          if [ -n "$ASC_KEY_P8" ] && [ -n "$ASC_KEY_ID" ] && [ -n "$ASC_ISSUER_ID" ]; then
+            NOTARY=asc
+          elif [ -n "$APPLE_ID" ] && [ -n "$APPLE_APP_PASSWORD" ]; then
+            NOTARY=appleid
+          else
+            echo "::error::No notarisation credentials. Set either ASC_KEY_P8 + ASC_KEY_ID + ASC_ISSUER_ID (an App Store Connect API key) or APPLE_ID + APPLE_APP_PASSWORD."
+            fail=1
+          fi
+          [ "$fail" = 0 ] || exit 1
+          echo "Notarising with: $NOTARY"
+
+          # The filename must end in .keychain-db. Recent macOS runners store a
+          # keychain created as "foo.keychain" under that name anyway, and every
+          # later security call then fails to find it.
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -base64 24)"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$P12" -k "$KEYCHAIN" -P "$MAC_CERT_PASSWORD" -f pkcs12 \
+            -T /usr/bin/codesign -T /usr/bin/security -T /usr/bin/productbuild
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s \
+            -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" > /dev/null
+          security list-keychains -d user -s "$KEYCHAIN" \
+            $(security list-keychains -d user | tr -d '"' | xargs)
+          rm -f "$P12"
+
+          IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN" | awk -F'"' 'NR==1{print $2}')
+          [ -n "$IDENTITY" ] || { echo "::error::the certificate imported but no codesigning identity came out of it"; exit 1; }
+          echo "Signing identity found"
+
+          APP="build-mac/NebulaTide_artefacts/Release/Standalone/Nebula Tide V2.app"
           codesign --deep --force --options runtime --sign "$IDENTITY" "$APP"
           ditto -c -k --keepParent "$APP" NebulaTide-mac.zip
-          xcrun notarytool submit NebulaTide-mac.zip \
-            --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" --wait
+          if [ "$NOTARY" = asc ]; then
+            KEY="$RUNNER_TEMP/asc.p8"
+            printf %s "$ASC_KEY_P8" | tr -d '[:space:]' | base64 --decode > "$KEY"
+            xcrun notarytool submit NebulaTide-mac.zip \
+              --key "$KEY" --key-id "$ASC_KEY_ID" --issuer "$ASC_ISSUER_ID" --wait
+            rm -f "$KEY"
+          else
+            xcrun notarytool submit NebulaTide-mac.zip \
+              --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" --wait
+          fi
           xcrun stapler staple "$APP"
 
       - name: Fetch sound library
         env:
-          SOUNDS_URL: ${{ endsWith(vars.SOUNDS_URL, '.zip') && vars.SOUNDS_URL || 'https://github.com/amanorsac/Nebula-Tide/releases/download/v1.0.0/NebulaTide-Sounds-1.1.0.zip' }}
+          # Only an override. Left empty, the library comes from this repo's own
+          # release, which is the normal path.
+          SOUNDS_URL: ${{ endsWith(vars.SOUNDS_URL, '.zip') && vars.SOUNDS_URL || '' }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "Downloading $SOUNDS_URL"
-          # GitHub's CDN occasionally resets large downloads: retry on any error, up to 8 times
-          # Try the configured URL, then the known-good release asset; retry each on any error.
+          # The library lives on a release rather than in the repo. gh is
+          # preinstalled on every runner and uses GITHUB_TOKEN, so it can read
+          # our own releases even though this repo is private, and it addresses
+          # the repo it is running in, so it survives a rename or a move to the
+          # org. An unauthenticated curl cannot do either: it gets a 404 that
+          # looks exactly like a missing file.
+          #
+          # SOUNDS_URL is tried first when set, but it is only a preference. A
+          # stale one falls through to the release instead of failing the build
+          # — that variable outlived the repo it pointed at once already, and
+          # took every platform down with it.
+          # GitHub's CDN occasionally resets large downloads, hence the retries.
+          # Size alone is not enough. A download can stop part way and still
+          # be large, and the first sign is unzip saying it cannot find the
+          # zip directory - by which point the retry loop has already given
+          # up and moved on. Opening the archive is the real test.
+          big () {
+            [ -f sounds.zip ] || return 1
+            [ "$(stat -f%z sounds.zip 2>/dev/null || stat -c%s sounds.zip)" -gt 100000000 ] || return 1
+            unzip -qq -l sounds.zip >/dev/null 2>&1 || tar -tf sounds.zip >/dev/null 2>&1
+          }
           ok=0
-          for u in "$SOUNDS_URL" "https://github.com/amanorsac/Nebula-Tide/releases/download/v1.0.0/NebulaTide-Sounds-1.1.0.zip"; do
-            for attempt in 1 2 3 4; do
-              echo "Downloading $u (attempt $attempt)"
-              if curl -L --fail --retry 3 --retry-all-errors --retry-delay 5 -o sounds.zip "$u" \
-                 && [ "$(stat -f%z sounds.zip 2>/dev/null || stat -c%s sounds.zip)" -gt 100000000 ]; then ok=1; break; fi
-              rm -f sounds.zip; sleep 8
+          if [ -n "$SOUNDS_URL" ]; then
+            for attempt in 1 2 3; do
+              echo "Downloading $SOUNDS_URL (attempt $attempt)"
+              if curl -L --fail --retry 2 --retry-all-errors --retry-delay 5 -o sounds.zip "$SOUNDS_URL" && big; then ok=1; break; fi
+              rm -f sounds.zip; sleep 5
             done
-            [ "$ok" = 1 ] && break
-          done
-          [ "$ok" = 1 ] || { echo "::error::could not download the sound library (check the SOUNDS_URL repo variable)"; exit 1; }
+            [ "$ok" = 1 ] || echo "::warning::SOUNDS_URL did not work; using this repo's own release instead"
+          fi
+          if [ "$ok" != 1 ]; then
+            for attempt in 1 2 3; do
+              echo "Downloading $SOUNDS_ASSET from release $SOUNDS_TAG (attempt $attempt)"
+              if gh release download "$SOUNDS_TAG" --repo "$GITHUB_REPOSITORY" \
+                 --pattern "$SOUNDS_ASSET" --output sounds.zip --clobber && big; then ok=1; break; fi
+              rm -f sounds.zip; sleep 5
+            done
+          fi
+          [ "$ok" = 1 ] || { echo "::error::could not download $SOUNDS_ASSET from release $SOUNDS_TAG; set the SOUNDS_URL repo variable to pull it from somewhere else"; exit 1; }
           ls -la sounds.zip
           # bsdtar reads every zip flavour (unzip rejects some); then verify we got files
           mkdir -p presets && tar -xf sounds.zip -C presets
@@ -164,23 +300,26 @@ jobs:
 
       - name: Build .pkg installer
         run: |
-          V="${GITHUB_REF_NAME#v}"; case "$V" in 1*) ;; *) V="1.0.0";; esac
+          # Same source as the Windows job: CMakeLists, unless this is a tag.
+          V=$(sed -n 's/^project(NebulaTide VERSION \([0-9.]*\)).*/\1/p' CMakeLists.txt)
+          [ "$GITHUB_REF_TYPE" = tag ] && V="${GITHUB_REF_NAME#v}"
+          echo "Building version $V"
           R=build-mac/NebulaTide_artefacts/Release
           mkdir -p pkgroot/Applications \
                    "pkgroot/Library/Audio/Plug-Ins/VST3" \
                    "pkgroot/Library/Audio/Plug-Ins/Components" \
                    "pkgroot/Library/Application Support/Nebula Tide"
-          cp -R "$R/Standalone/Nebula Tide.app" pkgroot/Applications/
-          cp -R "$R/VST3/Nebula Tide.vst3" "pkgroot/Library/Audio/Plug-Ins/VST3/"
-          cp -R "$R/AU/Nebula Tide.component" "pkgroot/Library/Audio/Plug-Ins/Components/"
+          cp -R "$R/Standalone/Nebula Tide V2.app" pkgroot/Applications/
+          cp -R "$R/VST3/Nebula Tide V2.vst3" "pkgroot/Library/Audio/Plug-Ins/VST3/"
+          cp -R "$R/AU/Nebula Tide V2.component" "pkgroot/Library/Audio/Plug-Ins/Components/"
           cp NebulaTide.ntlib "pkgroot/Library/Application Support/Nebula Tide/"
 
           # belt-and-braces for the plugin: a link to the library INSIDE each
           # bundle, so the VST3/AU find it regardless of DAW sandboxing
           ln -s "/Library/Application Support/Nebula Tide/NebulaTide.ntlib" \
-                "pkgroot/Library/Audio/Plug-Ins/VST3/Nebula Tide.vst3/Contents/Resources/NebulaTide.ntlib" || true
+                "pkgroot/Library/Audio/Plug-Ins/VST3/Nebula Tide V2.vst3/Contents/Resources/NebulaTide.ntlib" || true
           ln -s "/Library/Application Support/Nebula Tide/NebulaTide.ntlib" \
-                "pkgroot/Library/Audio/Plug-Ins/Components/Nebula Tide.component/Contents/Resources/NebulaTide.ntlib" || true
+                "pkgroot/Library/Audio/Plug-Ins/Components/Nebula Tide V2.component/Contents/Resources/NebulaTide.ntlib" || true
 
           # remove the old unencrypted folder left by versions up to 1.1.7
           mkdir -p scripts
@@ -201,9 +340,9 @@ jobs:
         run: |
           mkdir -p dist
           cd build-mac/NebulaTide_artefacts/Release
-          ditto -c -k --keepParent "Standalone/Nebula Tide.app" ../../../dist/NebulaTide-macOS-App.zip
-          ditto -c -k --keepParent "VST3/Nebula Tide.vst3" ../../../dist/NebulaTide-macOS-VST3.zip
-          ditto -c -k --keepParent "AU/Nebula Tide.component" ../../../dist/NebulaTide-macOS-AU.zip
+          ditto -c -k --keepParent "Standalone/Nebula Tide V2.app" ../../../dist/NebulaTide-macOS-App.zip
+          ditto -c -k --keepParent "VST3/Nebula Tide V2.vst3" ../../../dist/NebulaTide-macOS-VST3.zip
+          ditto -c -k --keepParent "AU/Nebula Tide V2.component" ../../../dist/NebulaTide-macOS-AU.zip
           cp ../../../installer/README.txt ../../../dist/
 
       - uses: actions/upload-artifact@v4
@@ -214,28 +353,65 @@ jobs:
   # ──────────────────────────────────────────────────────────────────────────
   ios:
     if: ${{ !startsWith(github.ref, 'refs/heads/ci-') }}
-    runs-on: macos-14
+    # Apple refuses uploads built with anything older than the iOS 26 SDK,
+    # which ships with Xcode 26, which needs a macOS 15 or later runner.
+    runs-on: macos-26
     env:
       # step-level `if` can read job env but not secrets directly
-      HAS_IOS_SIGNING: ${{ secrets.IOS_DIST_CERT_P12 != '' && secrets.ASC_KEY_P8 != '' }}
+      # APPLE_DIST_P12 is an Apple Distribution certificate, which covers iOS
+      # and the Mac App Store. IOS_DIST_CERT_P12, which this used to name, was
+      # never created, so the gate was always false and the job went green
+      # having signed nothing.
+      HAS_IOS_SIGNING: ${{ secrets.APPLE_DIST_P12 != '' && secrets.ASC_KEY_P8 != '' }}
     steps:
       - uses: actions/checkout@v4
 
       # the library is bundled INTO the iPad app (no downloads after install)
       - name: Fetch sound library
         env:
-          SOUNDS_URL: ${{ endsWith(vars.SOUNDS_URL, '.zip') && vars.SOUNDS_URL || 'https://github.com/amanorsac/Nebula-Tide/releases/download/v1.0.0/NebulaTide-Sounds-1.1.0.zip' }}
+          # Only an override. Left empty, the library comes from this repo's own
+          # release, which is the normal path.
+          SOUNDS_URL: ${{ endsWith(vars.SOUNDS_URL, '.zip') && vars.SOUNDS_URL || '' }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # The library lives on a release rather than in the repo. gh is
+          # preinstalled on every runner and uses GITHUB_TOKEN, so it can read
+          # our own releases even though this repo is private, and it addresses
+          # the repo it is running in, so it survives a rename or a move to the
+          # org. An unauthenticated curl cannot do either: it gets a 404 that
+          # looks exactly like a missing file.
+          #
+          # SOUNDS_URL is tried first when set, but it is only a preference. A
+          # stale one falls through to the release instead of failing the build
+          # — that variable outlived the repo it pointed at once already, and
+          # took every platform down with it.
+          # Size alone is not enough. A download can stop part way and still
+          # be large, and the first sign is unzip saying it cannot find the
+          # zip directory - by which point the retry loop has already given
+          # up and moved on. Opening the archive is the real test.
+          big () {
+            [ -f sounds.zip ] || return 1
+            [ "$(stat -f%z sounds.zip 2>/dev/null || stat -c%s sounds.zip)" -gt 100000000 ] || return 1
+            unzip -qq -l sounds.zip >/dev/null 2>&1 || tar -tf sounds.zip >/dev/null 2>&1
+          }
           ok=0
-          for u in "$SOUNDS_URL" "https://github.com/amanorsac/Nebula-Tide/releases/download/v1.0.0/NebulaTide-Sounds-1.1.0.zip"; do
-            for attempt in 1 2 3 4; do
-              if curl -L --fail --retry 3 --retry-all-errors --retry-delay 5 -o sounds.zip "$u" \
-                 && [ "$(stat -f%z sounds.zip 2>/dev/null || stat -c%s sounds.zip)" -gt 100000000 ]; then ok=1; break; fi
-              rm -f sounds.zip; sleep 8
+          if [ -n "$SOUNDS_URL" ]; then
+            for attempt in 1 2 3; do
+              echo "Downloading $SOUNDS_URL (attempt $attempt)"
+              if curl -L --fail --retry 2 --retry-all-errors --retry-delay 5 -o sounds.zip "$SOUNDS_URL" && big; then ok=1; break; fi
+              rm -f sounds.zip; sleep 5
             done
-            [ "$ok" = 1 ] && break
-          done
-          [ "$ok" = 1 ] || { echo "::error::could not download the sound library"; exit 1; }
+            [ "$ok" = 1 ] || echo "::warning::SOUNDS_URL did not work; using this repo's own release instead"
+          fi
+          if [ "$ok" != 1 ]; then
+            for attempt in 1 2 3; do
+              echo "Downloading $SOUNDS_ASSET from release $SOUNDS_TAG (attempt $attempt)"
+              if gh release download "$SOUNDS_TAG" --repo "$GITHUB_REPOSITORY" \
+                 --pattern "$SOUNDS_ASSET" --output sounds.zip --clobber && big; then ok=1; break; fi
+              rm -f sounds.zip; sleep 5
+            done
+          fi
+          [ "$ok" = 1 ] || { echo "::error::could not download $SOUNDS_ASSET from release $SOUNDS_TAG; set the SOUNDS_URL repo variable to pull it from somewhere else"; exit 1; }
           mkdir -p presets && tar -xf sounds.zip -C presets
           echo "Sound library: $(find presets -type f | wc -l) files"
 
@@ -254,43 +430,88 @@ jobs:
           cmake -S . -B build-ios -G Xcode
           -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0
           -DCMAKE_XCODE_GENERATE_SCHEME=ON
+          -DNEBULA_REQUIRE_LICENSE=OFF
           -DCMAKE_XCODE_ATTRIBUTE_DEVELOPMENT_TEAM=${{ secrets.APPLE_TEAM_ID }}
 
       # Unsigned build always runs: it proves the iOS/iPadOS code compiles.
+      # A skipped signing step used to leave the job green with nothing
+      # uploaded, which reads as success and is not. Say so out loud.
+      - name: Fail if iOS signing is not configured
+        if: env.HAS_IOS_SIGNING != 'true'
+        run: |
+          echo "::error::iOS signing is off, so this job would produce an unsigned build and upload nothing to TestFlight. It needs APPLE_DIST_P12 and ASC_KEY_P8; one or both are empty for this repository."
+          exit 1
+
       - name: Build (unsigned)
         run: cmake --build build-ios --config Release --target NebulaTide_Standalone -- CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
 
       # Signed App Store build + TestFlight upload, when the Apple secrets exist.
-      # Needs: IOS_DIST_CERT_P12 (base64), IOS_CERT_PASSWORD, IOS_PROVISION_PROFILE
-      # (base64 .mobileprovision), APPLE_TEAM_ID, ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8 (base64)
+      # Needs: APPLE_DIST_P12 (base64) and APPLE_DIST_PASSWORD, APPLE_TEAM_ID,
+      # and the App Store Connect key: ASC_KEY_P8 (base64), ASC_KEY_ID, ASC_ISSUER_ID.
+      # No provisioning profile secret: the key lets Xcode fetch one itself.
       - name: Archive & upload to TestFlight
         if: env.HAS_IOS_SIGNING == 'true'
         env:
-          IOS_DIST_CERT_P12: ${{ secrets.IOS_DIST_CERT_P12 }}
-          IOS_CERT_PASSWORD: ${{ secrets.IOS_CERT_PASSWORD }}
-          IOS_PROVISION_PROFILE: ${{ secrets.IOS_PROVISION_PROFILE }}
+          APPLE_DIST_P12: ${{ secrets.APPLE_DIST_P12 }}
+          APPLE_DIST_PASSWORD: ${{ secrets.APPLE_DIST_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
         run: |
-          # signing identity into a temporary keychain
-          echo "$IOS_DIST_CERT_P12" | base64 -d > dist.p12
-          security create-keychain -p ci ios.keychain
-          security default-keychain -s ios.keychain
-          security unlock-keychain -p ci ios.keychain
-          security import dist.p12 -k ios.keychain -P "$IOS_CERT_PASSWORD" -T /usr/bin/codesign
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k ci ios.keychain
+          # Same keychain handling as the macOS job: the .keychain-db suffix is
+          # required on current runners, and the certificate goes through a
+          # variable rather than the command line.
+          APPLE_DIST_PASSWORD=$(printf %s "$APPLE_DIST_PASSWORD" | tr -d '[:space:]')
+          echo "certificate password length: ${#APPLE_DIST_PASSWORD}"
+          P12="$RUNNER_TEMP/dist.p12"
+          KEYCHAIN="$RUNNER_TEMP/ios.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -base64 24)"
+          printf %s "$APPLE_DIST_P12" | tr -d '[:space:]' | base64 --decode > "$P12"
+          [ "$(wc -c < "$P12")" -gt 1000 ] || { echo "::error::APPLE_DIST_P12 did not decode to a certificate"; exit 1; }
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$P12" -k "$KEYCHAIN" -P "$APPLE_DIST_PASSWORD" -f pkcs12 \
+            -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s \
+            -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" > /dev/null
+          security list-keychains -d user -s "$KEYCHAIN" \
+            $(security list-keychains -d user | tr -d '"' | xargs)
+          rm -f "$P12"
 
-          # provisioning profile
-          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
-          echo "$IOS_PROVISION_PROFILE" | base64 -d > ~/Library/MobileDevice/Provisioning\ Profiles/nebula.mobileprovision
+          # No provisioning profile secret exists, and none is needed: with the
+          # App Store Connect key, Xcode creates and downloads the profile
+          # itself. That is one less credential to rotate by hand.
+          KEY_DIR=~/.appstoreconnect/private_keys
+          mkdir -p "$KEY_DIR"
+          ASC_KEY_FILE="$KEY_DIR/AuthKey_$ASC_KEY_ID.p8"
+          printf %s "$ASC_KEY_P8" | tr -d '[:space:]' | base64 --decode > "$ASC_KEY_FILE"
 
+          # The archive is built unsigned on purpose. With automatic signing,
+          # archiving asks Apple for a development profile, and that needs a
+          # registered device — which a CI runner is not, and which this team
+          # has none of. Forcing a distribution identity instead just makes
+          # Xcode refuse: it will not accept a manual identity on a target set
+          # to sign automatically.
+          #
+          # So signing moves entirely to the export step below, which is where
+          # the App Store Connect key can create the distribution profile
+          # itself. That is also the only profile this build actually needs.
+          # Say which Xcode this is. If the upload is ever rejected on SDK
+          # grounds again, this line is the first thing to read.
+          xcodebuild -version
           xcodebuild -list -project build-ios/NebulaTide.xcodeproj || true
           xcodebuild -project build-ios/NebulaTide.xcodeproj \
                      -scheme NebulaTide_Standalone -configuration Release \
                      -destination "generic/platform=iOS" -archivePath NebulaTide.xcarchive \
-                     DEVELOPMENT_TEAM="$APPLE_TEAM_ID" CODE_SIGN_STYLE=Automatic archive
+                     -allowProvisioningUpdates \
+                     -authenticationKeyPath "$ASC_KEY_FILE" \
+                     -authenticationKeyID "$ASC_KEY_ID" \
+                     -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+                     DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
+                     CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+                     archive
 
           cat > export.plist <<PL
           <?xml version="1.0" encoding="UTF-8"?>
@@ -298,20 +519,31 @@ jobs:
             <key>method</key><string>app-store-connect</string>
             <key>teamID</key><string>$APPLE_TEAM_ID</string>
             <key>uploadSymbols</key><true/>
+            <key>signingStyle</key><string>automatic</string>
+            <key>destination</key><string>export</string>
           </dict></plist>
           PL
           xcodebuild -exportArchive -archivePath NebulaTide.xcarchive \
-                     -exportOptionsPlist export.plist -exportPath ipa
+                     -exportOptionsPlist export.plist -exportPath ipa \
+                     -allowProvisioningUpdates \
+                     -authenticationKeyPath "$ASC_KEY_FILE" \
+                     -authenticationKeyID "$ASC_KEY_ID" \
+                     -authenticationKeyIssuerID "$ASC_ISSUER_ID"
 
-          # App Store Connect API key, then upload for TestFlight
-          mkdir -p ~/.appstoreconnect/private_keys
-          echo "$ASC_KEY_P8" | base64 -d > ~/.appstoreconnect/private_keys/AuthKey_$ASC_KEY_ID.p8
           xcrun altool --upload-app -f ipa/*.ipa -t ios \
                        --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID"
+          rm -f "$ASC_KEY_FILE"
 
+      # always(), because the useful output of this job is the build, and the
+      # step above fails for reasons that have nothing to do with it: a missing
+      # App Store record, a certificate secret that will not decode, an SDK
+      # Apple has just deprecated. Every one of those has happened here, and
+      # each time a perfectly good build was thrown away with the job.
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: NebulaTide-iOS
+          if-no-files-found: warn
           path: |
             build-ios/NebulaTide_artefacts/Release/Standalone
             ipa/*.ipa
@@ -337,18 +569,49 @@ jobs:
       # first launch (no downloads after install)
       - name: Pack the encrypted container into APK assets
         env:
-          SOUNDS_URL: ${{ endsWith(vars.SOUNDS_URL, '.zip') && vars.SOUNDS_URL || 'https://github.com/amanorsac/Nebula-Tide/releases/download/v1.0.0/NebulaTide-Sounds-1.1.0.zip' }}
+          # Only an override. Left empty, the library comes from this repo's own
+          # release, which is the normal path.
+          SOUNDS_URL: ${{ endsWith(vars.SOUNDS_URL, '.zip') && vars.SOUNDS_URL || '' }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # The library lives on a release rather than in the repo. gh is
+          # preinstalled on every runner and uses GITHUB_TOKEN, so it can read
+          # our own releases even though this repo is private, and it addresses
+          # the repo it is running in, so it survives a rename or a move to the
+          # org. An unauthenticated curl cannot do either: it gets a 404 that
+          # looks exactly like a missing file.
+          #
+          # SOUNDS_URL is tried first when set, but it is only a preference. A
+          # stale one falls through to the release instead of failing the build
+          # — that variable outlived the repo it pointed at once already, and
+          # took every platform down with it.
+          # Size alone is not enough. A download can stop part way and still
+          # be large, and the first sign is unzip saying it cannot find the
+          # zip directory - by which point the retry loop has already given
+          # up and moved on. Opening the archive is the real test.
+          big () {
+            [ -f sounds.zip ] || return 1
+            [ "$(stat -c%s sounds.zip)" -gt 100000000 ] || return 1
+            unzip -qq -l sounds.zip >/dev/null 2>&1 || tar -tf sounds.zip >/dev/null 2>&1
+          }
           ok=0
-          for u in "$SOUNDS_URL" "https://github.com/amanorsac/Nebula-Tide/releases/download/v1.0.0/NebulaTide-Sounds-1.1.0.zip"; do
-            for attempt in 1 2 3 4; do
-              if curl -L --fail --retry 3 --retry-all-errors --retry-delay 5 -o sounds.zip "$u" \
-                 && [ "$(stat -c%s sounds.zip)" -gt 100000000 ]; then ok=1; break; fi
-              rm -f sounds.zip; sleep 8
+          if [ -n "$SOUNDS_URL" ]; then
+            for attempt in 1 2 3; do
+              echo "Downloading $SOUNDS_URL (attempt $attempt)"
+              if curl -L --fail --retry 2 --retry-all-errors --retry-delay 5 -o sounds.zip "$SOUNDS_URL" && big; then ok=1; break; fi
+              rm -f sounds.zip; sleep 5
             done
-            [ "$ok" = 1 ] && break
-          done
-          [ "$ok" = 1 ] || { echo "::error::could not download the sound library"; exit 1; }
+            [ "$ok" = 1 ] || echo "::warning::SOUNDS_URL did not work; using this repo's own release instead"
+          fi
+          if [ "$ok" != 1 ]; then
+            for attempt in 1 2 3; do
+              echo "Downloading $SOUNDS_ASSET from release $SOUNDS_TAG (attempt $attempt)"
+              if gh release download "$SOUNDS_TAG" --repo "$GITHUB_REPOSITORY" \
+                 --pattern "$SOUNDS_ASSET" --output sounds.zip --clobber && big; then ok=1; break; fi
+              rm -f sounds.zip; sleep 5
+            done
+          fi
+          [ "$ok" = 1 ] || { echo "::error::could not download $SOUNDS_ASSET from release $SOUNDS_TAG; set the SOUNDS_URL repo variable to pull it from somewhere else"; exit 1; }
           mkdir -p presets && unzip -q -o sounds.zip -d presets   # GNU tar can't read zips
           rm -rf presets/Stems
           # build the packer and produce the encrypted container

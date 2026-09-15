@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(NebulaTide VERSION 1.3.0)
+project(NebulaTide VERSION 2.0.0)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -25,12 +25,17 @@ else()
     set(NEBULA_FORMATS Standalone VST3)
 endif()
 
+# Version 2 is a separate paid product that installs beside version 1, so it
+# needs its own identity everywhere a host or an OS looks. The plugin code and
+# the bundle id are what actually keep them apart: a DAW keys on the plugin
+# code, so reusing Ntid would make projects built on version 1 load version 2
+# instead, and mixes would come back sounding different.
 juce_add_plugin(NebulaTide
     COMPANY_NAME "NebulaTide"
-    PRODUCT_NAME "Nebula Tide"
-    BUNDLE_ID com.nebulatide.app
+    PRODUCT_NAME "Nebula Tide V2"
+    BUNDLE_ID com.amanorsac.nebulatide
     PLUGIN_MANUFACTURER_CODE Nblt
-    PLUGIN_CODE Ntid
+    PLUGIN_CODE Nt2d
     ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/assets/logo.png"
     FORMATS ${NEBULA_FORMATS}
     IS_SYNTH TRUE
@@ -47,9 +52,15 @@ juce_add_plugin(NebulaTide
     PLIST_TO_MERGE "${CMAKE_CURRENT_SOURCE_DIR}/ios/Info-extra.plist"
 )
 
+# Whether the build demands a license key. ON ships a paid product; OFF ships
+# the same binary with the gate removed, for a free release or for testing.
+# The license client is compiled in either way - only the gate changes.
+option(NEBULA_REQUIRE_LICENSE "Require a license key to run" ON)
+
 target_sources(NebulaTide PRIVATE
     src/PluginProcessor.cpp
     src/PluginEditor.cpp
+    src/PresetStudio.cpp
 )
 
 # Optionally embed audio from /presets into the binary. Default OFF: presets
@@ -71,6 +82,10 @@ if(NEBULA_EMBED_PRESETS AND PRESET_FILES)
 else()
     target_compile_definitions(NebulaTide PRIVATE NEBULA_HAS_EMBEDDED_PRESETS=0)
 endif()
+
+# Applies to every build, embedded presets or not.
+target_compile_definitions(NebulaTide PRIVATE
+    NEBULA_REQUIRE_LICENSE=$<BOOL:${NEBULA_REQUIRE_LICENSE}>)
 
 # iOS: the encrypted sound container ships inside the app bundle (and inside the
 # AUv3 extension, so the plugin works in GarageBand/Logic too). Build it first
@@ -99,6 +114,7 @@ target_compile_definitions(NebulaTide PRIVATE
 )
 
 target_link_libraries(NebulaTide PRIVATE
+    juce::juce_cryptography
     juce::juce_audio_utils
     juce::juce_dsp
     juce::juce_opengl
@@ -132,6 +148,25 @@ target_compile_definitions(NebulaPack PRIVATE
 target_link_libraries(NebulaPack PRIVATE
     juce::juce_cryptography
     juce::juce_audio_formats
+    juce::juce_events
+    juce::juce_core
+)
+
+# ── NebulaTest: offline checks for the v2 DSP and chord logic ──
+juce_add_console_app(NebulaTest PRODUCT_NAME "NebulaTest")
+target_sources(NebulaTest PRIVATE tools/test/main.cpp)
+target_compile_definitions(NebulaTest PRIVATE
+    JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0
+    NEBULA_REPO_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+)
+if(WIN32)
+    target_link_libraries(NebulaTest PRIVATE bcrypt crypt32)
+endif()
+target_link_libraries(NebulaTest PRIVATE
+    juce::juce_cryptography
+    juce::juce_audio_formats
+    juce::juce_audio_basics
+    juce::juce_gui_basics
     juce::juce_events
     juce::juce_core
 )

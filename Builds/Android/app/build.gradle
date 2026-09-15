@@ -5,7 +5,7 @@ def ndkVersionString = "26.2.11394342"
 android {
     compileSdk 34
     ndkVersion ndkVersionString
-    namespace "com.nebulatide.app"
+    namespace "com.amanorsac.nebulatide"
     externalNativeBuild {
         cmake {
             path "CMakeLists.txt"
@@ -23,7 +23,7 @@ android {
     }
 
     defaultConfig {
-        applicationId "com.nebulatide.app"
+        applicationId "com.amanorsac.nebulatide"
         minSdkVersion    24
         targetSdkVersion 34
         externalNativeBuild {
