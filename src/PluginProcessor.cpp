@@ -211,27 +211,47 @@ bool NebulaTideProcessor::installBundledLibrary (std::function<void (double)> pr
     dest.createDirectory();
     const auto target = dest.getChildFile ("NebulaTide.ntlib");
 
+    // Written under another name and renamed only once complete, so a copy cut
+    // short (app closed, phone full) is never mistaken for the library.
+    const auto partial = dest.getChildFile ("NebulaTide.ntlib.part");
+
     bool ok = false;
     if (AAsset* a = AAssetManager_open (mgr, "NebulaTide.ntlib", AASSET_MODE_STREAMING))
     {
-        const juce::int64 total = juce::jmax ((juce::int64) 1, (juce::int64) AAsset_getLength64 (a));
-        target.deleteFile();
-        juce::FileOutputStream out (target);
-        if (out.openedOk())
+        const juce::int64 expected = (juce::int64) AAsset_getLength64 (a);
+        const juce::int64 total = juce::jmax ((juce::int64) 1, expected);
+        partial.deleteFile();
+        juce::int64 written = 0;
+        bool writeFailed = false;
         {
-            std::vector<char> buf (1 << 16);
-            juce::int64 written = 0;
-            int n;
-            while ((n = AAsset_read (a, buf.data(), buf.size())) > 0)
+            juce::FileOutputStream out (partial);
+            if (out.openedOk())
             {
-                out.write (buf.data(), (size_t) n);
-                written += n;
-                if (progress) progress ((double) written / (double) total);
+                std::vector<char> buf (1 << 16);
+                int n;
+                while ((n = AAsset_read (a, buf.data(), buf.size())) > 0)
+                {
+                    if (! out.write (buf.data(), (size_t) n)) { writeFailed = true; break; }
+                    written += n;
+                    if (progress) progress ((double) written / (double) total);
+                }
+                out.flush();
+                writeFailed = writeFailed || out.getStatus().failed();
             }
-            out.flush();
-            ok = written > 0;
+            else
+            {
+                writeFailed = true;
+            }
         }
         AAsset_close (a);
+
+        if (! writeFailed && written > 0 && written == expected)
+        {
+            target.deleteFile();
+            ok = partial.moveFileTo (target);
+        }
+        if (! ok)
+            partial.deleteFile();
     }
     env->DeleteLocalRef (assetMgrObj);
     return ok;
@@ -645,6 +665,12 @@ juce::Array<juce::File> NebulaTideProcessor::findLibraryFiles()
     }
     addFrom (juce::File::getSpecialLocation (juce::File::globalApplicationsDirectory)
                  .getChildFile ("Nebula Tide"));
+
+   #if JUCE_ANDROID
+    // Where installBundledLibrary() unpacks the library on first launch. It was
+    // never searched, so even a successful copy would not have been found.
+    addFrom (userLibraryDir().getParentDirectory());
+   #endif
 
     return found;
 }
@@ -1457,10 +1483,19 @@ juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 // DPAPI-encrypted and bound to one machine, and Documents is commonly synced to
 // OneDrive, which would carry a device-bound proof to a machine it was never
 // issued for.
+//
+// Android is the other exception. There, Documents is the phone's shared
+// storage, which the app is not allowed to write to, so the first-launch copy
+// of the sound library failed and every install showed "could not be
+// installed". The app's own private storage is the right home on a phone.
 static juce::File productDataDir()
 {
-    return juce::File::getSpecialLocation (juce::File::userDocumentsDirectory)
-               .getChildFile ("Amanorsac Studio")
+   #if JUCE_ANDROID
+    const auto base = juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory);
+   #else
+    const auto base = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory);
+   #endif
+    return base.getChildFile ("Amanorsac Studio")
                .getChildFile ("Nebula Tide");
 }
 
