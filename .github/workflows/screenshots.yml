@@ -1,0 +1,157 @@
+name: App Store screenshots (iPhone + iPad)
+
+# Run this by hand when the interface has changed and the store listing needs
+# new pictures. It is separate from the release build on purpose: it is slow,
+# it is not needed on every commit, and nothing depends on it.
+#
+# The screenshots are real. The app is built for the simulator, installed on a
+# booted iPhone and iPad, and captured at each device's true resolution, which
+# is what App Store Connect checks. Desktop captures scaled up would be the
+# wrong pixel count and the wrong safe areas.
+#
+# Dispatching by name needs the file to exist on the default branch, and this
+# work lives on v2, so pushing a branch called shots-something runs it too.
+on:
+  workflow_dispatch:
+    inputs:
+      seconds_before_capture:
+        description: "How long to let the app settle before the shot"
+        default: "25"
+  push:
+    branches: ["shots*"]
+
+permissions:
+  contents: read
+
+env:
+  SOUNDS_TAG: v1.0.0
+  SOUNDS_ASSET: NebulaTide-Sounds-2.0.0.zip
+
+jobs:
+  shots:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch sound library
+        env:
+          SOUNDS_URL: ${{ endsWith(vars.SOUNDS_URL, '.zip') && vars.SOUNDS_URL || '' }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Without the library the app opens on an empty stage, and a
+          # screenshot of an empty stage is worse than no screenshot.
+          ok=0
+          if [ -n "$SOUNDS_URL" ]; then
+            curl -L --fail --retry 2 -o sounds.zip "$SOUNDS_URL" && ok=1
+          fi
+          if [ "$ok" != 1 ]; then
+            gh release download "$SOUNDS_TAG" --repo "$GITHUB_REPOSITORY" \
+               --pattern "$SOUNDS_ASSET" --output sounds.zip --clobber
+          fi
+          mkdir -p presets && tar -xf sounds.zip -C presets
+          echo "Sound library: $(find presets -type f | wc -l) files"
+
+      - name: Pack the encrypted container (mobile)
+        run: |
+          cmake -S . -B build-pack -G Xcode
+          cmake --build build-pack --config Release --target NebulaPack
+          PACK=$(find build-pack -name NebulaPack -type f -perm +111 | head -1)
+          # Must land at the repo root and be named NebulaTide.ntlib: CMake
+          # only bundles it into the iOS app if it is sitting there when the
+          # project is configured, which is the next step.
+          "$PACK" presets NebulaTide.ntlib --ogg 7
+          "$PACK" --verify NebulaTide.ntlib
+          ls -lh NebulaTide.ntlib
+
+      - name: Build for the simulator
+        run: |
+          # The simulator needs its own SDK: an iphoneos build will not install.
+          # No signing either, since nothing leaves the machine.
+          cmake -S . -B build-sim -G Xcode \
+                -DCMAKE_SYSTEM_NAME=iOS \
+                -DCMAKE_OSX_SYSROOT=iphonesimulator \
+                -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0 \
+                -DNEBULA_REQUIRE_LICENSE=OFF
+          cmake --build build-sim --config Release \
+                --target NebulaTide_Standalone \
+                -- -sdk iphonesimulator CODE_SIGNING_ALLOWED=NO
+
+      - name: Capture on iPhone and iPad
+        env:
+          SETTLE: ${{ inputs.seconds_before_capture }}
+        run: |
+          # JUCE puts the bundle under Release/Standalone regardless of SDK, so
+          # do not look for an "iphonesimulator" folder — there isn't one.
+          APP=$(find build-sim -name "*.app" -type d | head -1)
+          [ -n "$APP" ] || { echo "::error::no .app was produced"; find build-sim -name "*.app" | head; exit 1; }
+          echo "App: $APP"
+          BUNDLE=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$APP/Info.plist")
+          echo "Bundle: $BUNDLE"
+
+          mkdir -p shots
+
+          # Pick the largest iPhone and iPad the runner offers rather than
+          # naming a model. Apple renames these every year and a hardcoded
+          # name is a build that breaks itself in September.
+          shoot () {
+            local label="$1" pattern="$2"
+            local device
+            # Boot by UUID, not by name. Names carry a model suffix such as
+            # "(M4)" and trimming at the first bracket produced "iPad Pro
+            # 13-inch", which simctl rejects as not a device.
+            device=$(xcrun simctl list devices available | grep -E "$pattern" | tail -1 | grep -oE "[0-9A-Fa-f-]{36}" || true)
+            if [ -z "$device" ]; then
+              echo "::warning::no simulator matched $pattern, skipping $label"
+              return
+            fi
+            echo "== $label on $device =="
+            xcrun simctl shutdown all || true
+            xcrun simctl boot "$device"
+            xcrun simctl bootstatus "$device" -b
+            # Rotate the device to landscape before the app starts. Without it an
+            # iPad letterboxes the landscape-only app inside a portrait screen,
+            # and a phone turns the interface the other way up. The keystroke
+            # prints nothing when it works, which is why it once looked broken
+            # and was removed; every capture since came out wrong.
+            open -a Simulator --args -CurrentDeviceUDID "$device"
+            sleep 12
+            osascript -e 'tell application "Simulator" to activate' -e 'tell application "System Events" to key code 124 using command down' || echo "::warning::could not rotate the simulator; this shot may come out sideways"
+            sleep 4
+            xcrun simctl install "$device" "$APP"
+            xcrun simctl launch "$device" "$BUNDLE"
+            sleep "${SETTLE:-25}"
+            xcrun simctl io "$device" screenshot "shots/${label}.png"
+            # simctl records the screen in the device's native portrait
+            # orientation. The interface fills it edge to edge, so a portrait
+            # file is the landscape app on its side: turn it clockwise.
+            w=$(sips -g pixelWidth "shots/${label}.png" | awk '/pixelWidth/{print $2}')
+            h=$(sips -g pixelHeight "shots/${label}.png" | awk '/pixelHeight/{print $2}')
+            if [ "$h" -gt "$w" ]; then sips -r 90 "shots/${label}.png" >/dev/null; fi
+            xcrun simctl shutdown "$device" || true
+            echo "captured shots/${label}.png"
+          }
+
+          # The two store sizes...
+          shoot iphone 'iPhone .*Pro Max'
+          shoot ipad   'iPad Pro.*13'
+          # ...and the two smallest screens the app supports, which are where
+          # layout breaks first. Not for the store; for checking. An iPhone SE
+          # in landscape is about 375 points tall and an iPad mini about 744.
+          shoot iphone-smallest 'iPhone (SE|1[0-9]e)'
+          shoot ipad-smallest   'iPad mini'
+
+          # A fallback if the patterns above matched nothing on this image.
+          if [ -z "$(ls -A shots 2>/dev/null)" ]; then
+            echo "Devices this runner offers:"
+            xcrun simctl list devices available
+            echo "::error::no screenshots were captured"
+            exit 1
+          fi
+          sips -g pixelWidth -g pixelHeight shots/*.png
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: NebulaTide-screenshots
+          if-no-files-found: warn
+          path: shots/*.png
