@@ -35,6 +35,7 @@
 #include <juce_core/juce_core.h>
 #include <juce_cryptography/juce_cryptography.h>
 #include "LicenseKeys.h"
+#include "P256.h"
 
 #include <cstdint>
 #include <cstring>
@@ -260,6 +261,22 @@ inline bool secretStorageIsEncrypted() { return false; }
 
 #endif
 
+// Whether the licence may be written to disk at all. On Windows and macOS it
+// is, encrypted by the operating system. On Android there is no secret store
+// this code can reach, but the licence lives in the app's private internal
+// storage, which other apps cannot read and which goes with the app when it is
+// removed. The proof is signed and bound to this device, so a copy is useless
+// elsewhere; without this the key would have to be typed on every launch.
+// Anywhere else the licence is held in memory only.
+inline bool canPersistSecrets()
+{
+   #if JUCE_ANDROID
+    return true;
+   #else
+    return secretStorageIsEncrypted();
+   #endif
+}
+
 // ------------------------------------------------------- signature verification --
 
 /**
@@ -340,8 +357,11 @@ inline bool verifySignature (const void* message, size_t messageBytes,
                                   digestData.ref, sigData.ref, nullptr) != 0;
 
 #else
-    juce::ignoreUnused (messageBytes);
-    return false;   // no verifier available -> refuse, never accept
+    // Android, and anywhere else without a platform verifier. This used to
+    // refuse every proof, which would have locked out every paying customer on
+    // a key-protected Android build. The portable verifier is proved against
+    // real signatures in tools/test, and refuses on any doubt.
+    return p256::verify (kLicenseSigningKey, message, messageBytes, static_cast<const uint8_t*> (signature));
 #endif
 }
 

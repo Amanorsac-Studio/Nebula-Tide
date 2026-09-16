@@ -7,6 +7,14 @@ project(juce_jni_project)
 
 set(BINARY_NAME "juce_jni")
 
+# Passed in by Gradle. 1 only for the website build, which asks for a licence
+# key; the Play build is unlocked because Google takes the payment.
+if(NEBULA_REQUIRE_LICENSE)
+    add_definitions([[-DNEBULA_REQUIRE_LICENSE=1]])
+else()
+    add_definitions([[-DNEBULA_REQUIRE_LICENSE=0]])
+endif()
+
 set(OBOE_DIR "../../../build/_deps/juce-src/modules/juce_audio_devices/native/oboe")
 
 add_subdirectory (${OBOE_DIR} ./oboe)

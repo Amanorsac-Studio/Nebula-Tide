@@ -549,11 +549,11 @@ jobs:
             ipa/*.ipa
 
   # ──────────────────────────────────────────────────────────────────────────
-  # Android: Projucer-generated Gradle project in Builds/Android. Sounds are
-  # downloaded by the app on first launch (Play Store size limits), so the
-  # APK is small. Signed release APK when ANDROID_KEYSTORE_B64 /
-  # ANDROID_KEYSTORE_PASSWORD / ANDROID_KEY_ALIAS secrets exist, otherwise a
-  # debug-signed APK that can be sideloaded for testing.
+  # Android: Projucer-generated Gradle project in Builds/Android. The sounds
+  # are packed into the app itself, never downloaded. With the signing secrets
+  # (ANDROID_KEYSTORE_B64 / ANDROID_KEYSTORE_PASSWORD / ANDROID_KEY_ALIAS) it
+  # makes two files: the Play bundle, which has no licence screen, and the
+  # website APK, which asks for a licence key. Without them, a debug APK.
   android:
     runs-on: ubuntu-latest
     steps:
@@ -673,32 +673,40 @@ jobs:
             echo "$ANDROID_KEYSTORE_B64" | base64 -d > release.keystore
             BT=$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)
 
-            # 1. APK — for your website / direct download
-            gradle_run assembleRelease_Release
+            # 1. App Bundle for Google Play. Play takes the payment, so this
+            #    build has no licence key screen.
+            gradle_run bundleRelease_Release
+            AAB=$(find app/build/outputs/bundle -iname "*.aab" | head -1)
+            jarsigner -keystore release.keystore -storepass "$ANDROID_KEYSTORE_PASSWORD" \
+              -signedjar ../../NebulaTide-V2-Android-Play.aab "$AAB" "$ANDROID_KEY_ALIAS"
+
+            # 2. APK for the website: asks for a licence key, carries the sounds,
+            #    and has its own app id so it installs beside a Play copy. No
+            #    unlocked APK is made at all, so a free copy can never end up on
+            #    the site by mistake.
+            # The native code differs between the two (the licence switch), so
+            # nothing compiled for the Play bundle may be reused here.
+            rm -rf app/.cxx app/build/intermediates/cxx app/build/intermediates/merged_native_libs \
+                   app/build/intermediates/stripped_native_libs
+            gradle_run -PnebulaWebsite=1 assembleRelease_Release
             APK=$(find app/build/outputs/apk -iname "*release*.apk" | head -1)
             "$ANDROID_HOME/build-tools/$BT/zipalign" -p -f 4 "$APK" aligned.apk
             "$ANDROID_HOME/build-tools/$BT/apksigner" sign --ks release.keystore \
               --ks-pass "pass:$ANDROID_KEYSTORE_PASSWORD" --ks-key-alias "$ANDROID_KEY_ALIAS" \
-              --out ../../NebulaTide-Android.apk aligned.apk
-            "$ANDROID_HOME/build-tools/$BT/apksigner" verify ../../NebulaTide-Android.apk
-
-            # 2. AAB — the format Google Play requires for new apps
-            gradle_run bundleRelease_Release
-            AAB=$(find app/build/outputs/bundle -iname "*.aab" | head -1)
-            jarsigner -keystore release.keystore -storepass "$ANDROID_KEYSTORE_PASSWORD" \
-              -signedjar ../../NebulaTide-Android.aab "$AAB" "$ANDROID_KEY_ALIAS"
+              --out ../../NebulaTide-V2-Android-Website.apk aligned.apk
+            "$ANDROID_HOME/build-tools/$BT/apksigner" verify ../../NebulaTide-V2-Android-Website.apk
           else
             gradle_run assembleDebug_Debug
             cp "$(find app/build/outputs/apk -name '*.apk' | head -1)" ../../NebulaTide-Android-debug.apk
           fi
-          ls -la ../../NebulaTide-Android* || true
+          ls -la ../../NebulaTide*Android* || true
 
       - uses: actions/upload-artifact@v4
         with:
           name: NebulaTide-Android
           path: |
-            NebulaTide-Android*.apk
-            NebulaTide-Android*.aab
+            NebulaTide*Android*.apk
+            NebulaTide*Android*.aab
 
   # ──────────────────────────────────────────────────────────────────────────
   # On a version tag, collect everything into a GitHub Release so the zips

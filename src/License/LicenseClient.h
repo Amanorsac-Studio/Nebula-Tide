@@ -396,8 +396,8 @@ private:
 
     void persistLicenseKey()
     {
-        if (! licensecrypto::secretStorageIsEncrypted())
-            return;   // no OS secret store on this build: don't write plaintext
+        if (! licensecrypto::canPersistSecrets())
+            return;   // nowhere safe to keep it on this build: memory only
 
         juce::MemoryBlock plain (licenseKey.toRawUTF8(), (size_t) licenseKey.getNumBytesAsUTF8());
         auto blob = licensecrypto::protectSecret (plain);
@@ -457,7 +457,7 @@ private:
         proofValid = true;
         recomputeLicensedFlag();
 
-        if (licensecrypto::secretStorageIsEncrypted())
+        if (licensecrypto::canPersistSecrets())
         {
             juce::MemoryBlock plain (signedBlob.toRawUTF8(), (size_t) signedBlob.getNumBytesAsUTF8());
             auto enc = licensecrypto::protectSecret (plain);

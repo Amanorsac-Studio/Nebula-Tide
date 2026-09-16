@@ -87,8 +87,12 @@ public:
 
     void resized() override
     {
-        auto a = getLocalBounds().reduced (40);
-        a.removeFromTop (juce::jmax (20, a.getHeight() / 6));
+        // A phone in landscape is about 400 points tall, and the on-screen
+        // keyboard covers the lower half while the key is typed, so short
+        // screens drop the generous desktop margins and keep the box high.
+        const bool compact = getHeight() < 600;
+        auto a = getLocalBounds().reduced (compact ? 16 : 40);
+        a.removeFromTop (compact ? 4 : juce::jmax (20, a.getHeight() / 6));
         title.setBounds (a.removeFromTop (40));
         a.removeFromTop (12);
         blurb.setBounds (a.removeFromTop (44));

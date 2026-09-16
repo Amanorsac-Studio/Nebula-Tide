@@ -115,7 +115,7 @@ You can do these while waiting; they don't depend on the build.
 
 ## 4a. Android → Google Play
 
-1. Download `NebulaTide-Android.aab` from the release Claude builds for you
+1. Download `NebulaTide-V2-Android-Play.aab` from the release Claude builds for you
 2. Play Console → left menu → **Testing → Internal testing**
 3. **Create new release**
 4. Drag the **.aab** into the upload box
@@ -173,7 +173,7 @@ downloads are separate, and each platform needs its own signing:
 |---|---|---|---|
 | `NebulaTide-…-Setup.exe` (Windows) | **Windows code-signing certificate** — must be purchased, ~$200–400/year (Sectigo, DigiCert) or Azure Trusted Signing | ❌ you don't have one | SmartScreen shows "Windows protected your PC" — user clicks *More info → Run anyway* |
 | `NebulaTide-…-macOS.pkg` (Mac) | **Developer ID Application** + **Developer ID Installer** | ⏳ CSRs ready, certificates not created yet | Gatekeeper says "unidentified developer" — user right-clicks → *Open* |
-| `NebulaTide-Android.apk` (website) | your Android key — **already done** ✅ | ✅ | none, installs normally |
+| `NebulaTide-V2-Android-Website.apk` (website, asks for a licence key) | your Android key — **already done** ✅ | ✅ | Android asks once to allow installs from the browser |
 
 **To fix the Mac warning** (optional, ~10 minutes):
 

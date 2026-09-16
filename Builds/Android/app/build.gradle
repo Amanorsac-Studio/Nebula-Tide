@@ -23,12 +23,15 @@ android {
     }
 
     defaultConfig {
-        applicationId "com.amanorsac.nebulatide"
+        // -PnebulaWebsite=1 builds the copy sold on the website: it asks for a
+        // licence key, and has its own id so it installs beside a Play copy
+        // instead of failing with "App not installed" over a different signature.
+        applicationId project.hasProperty("nebulaWebsite") ? "com.amanorsac.nebulatide.direct" : "com.amanorsac.nebulatide"
         minSdkVersion    24
         targetSdkVersion 34
         externalNativeBuild {
             cmake {
-                arguments "-DANDROID_TOOLCHAIN=clang", "-DANDROID_PLATFORM=android-24", "-DANDROID_STL=c++_static", "-DANDROID_CPP_FEATURES=exceptions rtti", "-DANDROID_ARM_MODE=arm", "-DANDROID_ARM_NEON=TRUE", "-DANDROID_WEAK_API_DEFS=ON", "-DCMAKE_CXX_STANDARD=17", "-DCMAKE_CXX_EXTENSIONS=OFF"
+                arguments "-DANDROID_TOOLCHAIN=clang", "-DANDROID_PLATFORM=android-24", "-DANDROID_STL=c++_static", "-DANDROID_CPP_FEATURES=exceptions rtti", "-DANDROID_ARM_MODE=arm", "-DANDROID_ARM_NEON=TRUE", "-DANDROID_WEAK_API_DEFS=ON", "-DCMAKE_CXX_STANDARD=17", "-DCMAKE_CXX_EXTENSIONS=OFF", "-DNEBULA_REQUIRE_LICENSE=" + (project.hasProperty("nebulaWebsite") ? "1" : "0")
             }
         }
     }

@@ -449,6 +449,81 @@ static void testUserContent()
 // Both were build-configuration errors, not logic errors, and neither showed
 // up until real customers tried to activate. They are cheap to assert here,
 // so they can never ship again unnoticed.
+//==============================================================================
+// Android has no platform signature verifier, so licence proofs there go
+// through the portable P-256 implementation. There is no Android device to
+// test on, so it is proved here: against real signatures made by Node's crypto
+// library, and against each way a forged or damaged proof might get through.
+static void testPortableP256()
+{
+    std::cout << std::endl << "-- portable P-256 signature check --" << std::endl;
+
+    namespace p = amanorsacstudio::p256;
+    auto bytes = [] (const char* hexText) { juce::MemoryBlock m; m.loadFromHexString (hexText); return m; };
+
+    const auto pub = bytes ("04de912264a494a0dbf2e032678a0d4ad9c92c69b98ce60fa6d8f8548dd35790d7"
+                            "66cc5c105a9e4b84abf58d19a7940edfb574f35007ca814c19d629b38e0c07a8");
+    struct Vector { const char* msg; const char* sig; };
+    const Vector vectors[] = {
+        { R"({"licenseKey":"NEBU-TEST","deviceKey":"abc"})",
+          "e3ec7acbbdc99461e26c9f850198521a0dd54c35ae7eca13ec88b2eadc00beaa"
+          "fadb87b68b922530bed83f769de69cdc2dd44a8dd8ff146c58d6d0924d82a997" },
+        { "a",
+          "01f1744217aa9c0fec5dd4f64c9eeaf65b26c1f67f11e0cbb4b1d94a91fc1dee"
+          "65d97e2cc75d7b54b982f7c09dee1bd5ba874c1cb7dee8242522da8d4a8545f7" },
+        { "",
+          "08fa106cfa73caf61a3a6146d9cc5f24b0dcd44996ea6aec02529e84793f8351"
+          "3b83aba9cd24ff954d71ea7e37975b79d55cddeccea2654922a2d4f9f821c7e8" },
+    };
+
+    auto run = [] (const juce::MemoryBlock& key, const char* msg, size_t len, const juce::MemoryBlock& sig)
+    {
+        return p::verify (static_cast<const uint8_t*> (key.getData()), msg, len,
+                          static_cast<const uint8_t*> (sig.getData()));
+    };
+
+    const auto t0 = juce::Time::getMillisecondCounterHiRes();
+    for (const auto& v : vectors)
+        check (run (pub, v.msg, std::strlen (v.msg), bytes (v.sig)),
+               "a real signature verifies (" + juce::String ((int) std::strlen (v.msg)) + "-byte message)");
+    const double ms = (juce::Time::getMillisecondCounterHiRes() - t0) / 3.0;
+    check (ms < 1500.0, "verification is quick enough to run on every launch",
+           juce::String (ms, 1) + " ms each");
+
+    const auto& first = vectors[0];
+    const auto sig = bytes (first.sig);
+    const auto len = std::strlen (first.msg);
+
+    juce::String changed (first.msg);
+    changed = changed.replace ("NEBU-TEST", "NEBU-TESU");
+    check (! run (pub, changed.toRawUTF8(), (size_t) changed.getNumBytesAsUTF8(), sig),
+           "a proof with one character changed is refused");
+
+    auto flipped = sig;
+    static_cast<uint8_t*> (flipped.getData())[40] ^= 0x01;
+    check (! run (pub, first.msg, len, flipped), "a signature with one bit flipped is refused");
+
+    auto zeroR = sig;
+    std::memset (zeroR.getData(), 0, 32);
+    check (! run (pub, first.msg, len, zeroR), "a signature with r = 0 is refused");
+
+    auto bigS = sig;
+    const auto order = bytes ("ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551");
+    std::memcpy (static_cast<uint8_t*> (bigS.getData()) + 32, order.getData(), 32);
+    check (! run (pub, first.msg, len, bigS), "a signature with s out of range is refused");
+
+    auto offCurve = pub;
+    static_cast<uint8_t*> (offCurve.getData())[64] ^= 0x01;
+    check (! run (offCurve, first.msg, len, sig), "a public key that is not on the curve is refused");
+
+    auto compressed = pub;
+    static_cast<uint8_t*> (compressed.getData())[0] = 0x02;
+    check (! run (compressed, first.msg, len, sig), "a key that is not an uncompressed point is refused");
+
+    check (! run (pub, vectors[1].msg, std::strlen (vectors[1].msg), sig),
+           "a signature made for a different message is refused");
+}
+
 static void testLicensing()
 {
     std::cout << "\nLICENSING" << std::endl;
@@ -997,6 +1072,7 @@ int main()
     testDensity();
     testUserContent();
     testLicensing();
+    testPortableP256();
     testCredits();
     testPresetSharing();
     testDeleteMatching();
