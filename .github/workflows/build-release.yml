@@ -432,7 +432,7 @@ jobs:
       - name: Configure (iOS)
         run: >
           cmake -S . -B build-ios -G Xcode
-          -DNEBULA_VERSION_STRING=${{ vars.IOS_VERSION || '1.1' }}
+          -DNEBULA_VERSION_STRING=${{ vars.IOS_VERSION || '2.0.1' }}
           -DNEBULA_BUILD_NUMBER=${{ github.run_number }}
           -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0
           -DCMAKE_XCODE_GENERATE_SCHEME=ON
