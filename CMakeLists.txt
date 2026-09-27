@@ -30,7 +30,16 @@ endif()
 # the bundle id are what actually keep them apart: a DAW keys on the plugin
 # code, so reusing Ntid would make projects built on version 1 load version 2
 # instead, and mixes would come back sounding different.
+# The version shown to a store or an installer. It follows project() above
+# unless a build overrides it, which is how the App Store submission can carry
+# its own number without the code, the sounds or any other platform changing.
+set(NEBULA_VERSION_STRING "${PROJECT_VERSION}" CACHE STRING "Version shown to stores and installers")
+# Apple needs every upload of one version to have a different build number.
+set(NEBULA_BUILD_NUMBER "${NEBULA_VERSION_STRING}" CACHE STRING "Build number for App Store uploads")
+
 juce_add_plugin(NebulaTide
+    VERSION "${NEBULA_VERSION_STRING}"
+    BUILD_VERSION "${NEBULA_BUILD_NUMBER}"
     COMPANY_NAME "NebulaTide"
     PRODUCT_NAME "Nebula Tide V2"
     BUNDLE_ID com.amanorsac.nebulatide
@@ -110,7 +119,8 @@ target_compile_definitions(NebulaTide PRIVATE
     JUCE_VST3_CAN_REPLACE_VST2=0
     JUCE_USE_MP3AUDIOFORMAT=1
     NEBULA_BETA_EXPIRY="${NEBULA_BETA_EXPIRY}"
-    NEBULA_VERSION="${PROJECT_VERSION}"
+    # The About screen says the same number the store does.
+    NEBULA_VERSION="${NEBULA_VERSION_STRING}"
 )
 
 target_link_libraries(NebulaTide PRIVATE

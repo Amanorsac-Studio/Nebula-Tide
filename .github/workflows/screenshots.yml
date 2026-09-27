@@ -93,8 +93,12 @@ jobs:
           # Pick the largest iPhone and iPad the runner offers rather than
           # naming a model. Apple renames these every year and a hardcoded
           # name is a build that breaks itself in September.
+          # $3 is how many pictures to take of this device, spaced apart. The
+          # stage drifts and blooms the whole time, so shots taken a few
+          # seconds apart are genuinely different pictures rather than copies -
+          # which is what a store listing needs several of.
           shoot () {
-            local label="$1" pattern="$2"
+            local label="$1" pattern="$2" count="${3:-1}"
             local device
             # Boot by UUID, not by name. Names carry a model suffix such as
             # "(M4)" and trimming at the first bracket produced "iPad Pro
@@ -120,25 +124,35 @@ jobs:
             xcrun simctl install "$device" "$APP"
             xcrun simctl launch "$device" "$BUNDLE"
             sleep "${SETTLE:-25}"
-            xcrun simctl io "$device" screenshot "shots/${label}.png"
-            # simctl records the screen in the device's native portrait
-            # orientation. The interface fills it edge to edge, so a portrait
-            # file is the landscape app on its side: turn it clockwise.
-            w=$(sips -g pixelWidth "shots/${label}.png" | awk '/pixelWidth/{print $2}')
-            h=$(sips -g pixelHeight "shots/${label}.png" | awk '/pixelHeight/{print $2}')
-            if [ "$h" -gt "$w" ]; then sips -r 90 "shots/${label}.png" >/dev/null; fi
+            local i file
+            for i in $(seq 1 "$count"); do
+              if [ "$count" = 1 ]; then file="shots/${label}.png"; else file="shots/${label}-${i}.png"; fi
+              [ "$i" = 1 ] || sleep 8
+              xcrun simctl io "$device" screenshot "$file"
+              # simctl records the screen in the device's native portrait
+              # orientation. The interface fills it edge to edge, so a portrait
+              # file is the landscape app on its side: turn it clockwise.
+              w=$(sips -g pixelWidth "$file" | awk '/pixelWidth/{print $2}')
+              h=$(sips -g pixelHeight "$file" | awk '/pixelHeight/{print $2}')
+              if [ "$h" -gt "$w" ]; then sips -r 90 "$file" >/dev/null; fi
+              echo "captured $file"
+            done
             xcrun simctl shutdown "$device" || true
-            echo "captured shots/${label}.png"
           }
 
-          # The two store sizes...
-          shoot iphone 'iPhone .*Pro Max'
-          shoot ipad   'iPad Pro.*13'
+          # The two store sizes. The iPad listing needs several pictures, so
+          # take four of the 13-inch, which is the size Apple asks for.
+          shoot iphone 'iPhone .*Pro Max' 2
+          shoot ipad   'iPad Pro.*13' 4
+          # More iPad shapes: the 11-inch and the Air are the sizes most
+          # customers actually hold, and each has its own proportions.
+          shoot ipad-11  'iPad Pro.*11' 2
+          shoot ipad-air 'iPad Air' 2
           # ...and the two smallest screens the app supports, which are where
           # layout breaks first. Not for the store; for checking. An iPhone SE
           # in landscape is about 375 points tall and an iPad mini about 744.
           shoot iphone-smallest 'iPhone (SE|1[0-9]e)'
-          shoot ipad-smallest   'iPad mini'
+          shoot ipad-smallest   'iPad mini' 2
 
           # A fallback if the patterns above matched nothing on this image.
           if [ -z "$(ls -A shots 2>/dev/null)" ]; then

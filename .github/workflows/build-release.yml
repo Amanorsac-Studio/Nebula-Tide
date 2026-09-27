@@ -425,9 +425,15 @@ jobs:
           "$PACK" --verify NebulaTide.ntlib
           ls -lh NebulaTide.ntlib
 
+      # The number the App Store shows for this upload. Only the label differs;
+      # the code, the sounds and every other platform are untouched. The build
+      # number is the run number, because Apple refuses a second upload of one
+      # version with a build number it has already seen.
       - name: Configure (iOS)
         run: >
           cmake -S . -B build-ios -G Xcode
+          -DNEBULA_VERSION_STRING=${{ vars.IOS_VERSION || '1.1' }}
+          -DNEBULA_BUILD_NUMBER=${{ github.run_number }}
           -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0
           -DCMAKE_XCODE_GENERATE_SCHEME=ON
           -DNEBULA_REQUIRE_LICENSE=OFF
