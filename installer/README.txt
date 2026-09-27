@@ -27,9 +27,10 @@ Run  NebulaTide-1.3.0-macOS.pkg  — one installer for everything:
 (If macOS says the installer is from an unidentified developer: right-click
 the .pkg -> Open -> Open.)
 
-ANDROID: install NebulaTide-Android*.apk (sideload) or via Google Play. The sound
-library is inside the app; first launch takes a moment to unpack it. No internet
-connection is ever needed.
+ANDROID: install NebulaTide-V2-Android-Website.apk from the website, or get the
+app from Google Play. The sound library is inside the app; first launch takes a
+moment to unpack it. The website copy asks for your licence key on first launch,
+which needs an internet connection once; after that none is needed.
 
 iPad: available through the App Store / TestFlight only (Apple does not allow
 installing iPad apps from a download).

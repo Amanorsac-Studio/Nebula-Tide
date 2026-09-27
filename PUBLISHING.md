@@ -43,9 +43,11 @@ copy the remaining text.
 
 Each release now produces two Android files:
 
-- **`NebulaTide-Android.aab`** → upload to **Play Console → Production → Create release**
-  (Play requires the `.aab` format for new apps)
-- **`NebulaTide-Android.apk`** → put on your website for direct download / sideloading
+- **`NebulaTide-V2-Android-Play.aab`** → upload to **Play Console → Production → Create release**
+  (Play requires the `.aab` format for new apps). No licence key screen: Google takes the payment.
+- **`NebulaTide-V2-Android-Website.apk`** → put on your website for direct download. It asks for
+  a licence key on first launch (internet needed once, to activate), carries all the sounds, and
+  installs beside a Play copy because it has its own app id (`com.amanorsac.nebulatide.direct`).
 
 Play Console first-time setup also needs: app name, short & full description
 (use `marketing/handoff.json`), screenshots (`marketing/screenshots/`), a

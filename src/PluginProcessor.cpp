@@ -1,9 +1,14 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "UserContent.h"
 
 #if NEBULA_HAS_EMBEDDED_PRESETS
  #include "BinaryData.h"
 #endif
+
+// Documents/Amanorsac Studio/<Product>/ - defined further down, declared here
+// because the library paths above need it.
+static juce::File productDataDir();
 
 //==============================================================================
 void PadVoice::render (juce::AudioBuffer<float>& out, int numSamples,
@@ -118,39 +123,8 @@ void AuxVoice::render (juce::AudioBuffer<float>& out, int numSamples,
 }
 
 //==============================================================================
-// Filename convention: "<PresetName>_<Key>.wav" e.g. "Deep_Current_Eb.wav",
-// "solar wind F#.mp3". A file with no key token is treated as key of C.
-static int parseKeyToken (const juce::String& token)
-{
-    static const std::pair<const char*, int> map[] = {
-        { "c", 0 }, { "c#", 1 }, { "db", 1 }, { "d", 2 }, { "d#", 3 }, { "eb", 3 },
-        { "e", 4 }, { "f", 5 }, { "f#", 6 }, { "gb", 6 }, { "g", 7 }, { "g#", 8 },
-        { "ab", 8 }, { "a", 9 }, { "a#", 10 }, { "bb", 10 }, { "b", 11 }
-    };
-    const auto t = token.toLowerCase();
-    for (auto& [name, idx] : map)
-        if (t == name) return idx;
-    return -1;
-}
-
-static void splitNameAndKey (const juce::String& stem, juce::String& outName, int& outKey)
-{
-    // try the last token separated by '_', '-' or space
-    const int cut = juce::jmax (stem.lastIndexOfChar ('_'),
-                                juce::jmax (stem.lastIndexOfChar ('-'), stem.lastIndexOfChar (' ')));
-    if (cut > 0)
-    {
-        const int key = parseKeyToken (stem.substring (cut + 1).trim());
-        if (key >= 0)
-        {
-            outName = stem.substring (0, cut).replaceCharacters ("_-", "  ").trim();
-            outKey = key;
-            return;
-        }
-    }
-    outName = stem.replaceCharacters ("_-", "  ").trim();
-    outKey = 0;
-}
+// Naming lives in UserContent.h so it can be tested without launching the app.
+using usercontent::splitNameAndKey;
 
 //==============================================================================
 // Locates the sound library. Walks upward from the running binary (so it works
@@ -206,14 +180,7 @@ static juce::File findPresetsDir()
 
 juce::File NebulaTideProcessor::userLibraryDir()
 {
-   #if JUCE_MAC
-    // ~/Library/Application Support/Nebula Tide/presets (Mac convention)
-    return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
-               .getChildFile ("Application Support").getChildFile ("Nebula Tide").getChildFile ("presets");
-   #else
-    return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
-               .getChildFile ("Nebula Tide").getChildFile ("presets");
-   #endif
+    return productDataDir().getChildFile ("Library");
 }
 
 void NebulaTideProcessor::reloadLibrary()
@@ -244,27 +211,47 @@ bool NebulaTideProcessor::installBundledLibrary (std::function<void (double)> pr
     dest.createDirectory();
     const auto target = dest.getChildFile ("NebulaTide.ntlib");
 
+    // Written under another name and renamed only once complete, so a copy cut
+    // short (app closed, phone full) is never mistaken for the library.
+    const auto partial = dest.getChildFile ("NebulaTide.ntlib.part");
+
     bool ok = false;
     if (AAsset* a = AAssetManager_open (mgr, "NebulaTide.ntlib", AASSET_MODE_STREAMING))
     {
-        const juce::int64 total = juce::jmax ((juce::int64) 1, (juce::int64) AAsset_getLength64 (a));
-        target.deleteFile();
-        juce::FileOutputStream out (target);
-        if (out.openedOk())
+        const juce::int64 expected = (juce::int64) AAsset_getLength64 (a);
+        const juce::int64 total = juce::jmax ((juce::int64) 1, expected);
+        partial.deleteFile();
+        juce::int64 written = 0;
+        bool writeFailed = false;
         {
-            std::vector<char> buf (1 << 16);
-            juce::int64 written = 0;
-            int n;
-            while ((n = AAsset_read (a, buf.data(), buf.size())) > 0)
+            juce::FileOutputStream out (partial);
+            if (out.openedOk())
             {
-                out.write (buf.data(), (size_t) n);
-                written += n;
-                if (progress) progress ((double) written / (double) total);
+                std::vector<char> buf (1 << 16);
+                int n;
+                while ((n = AAsset_read (a, buf.data(), buf.size())) > 0)
+                {
+                    if (! out.write (buf.data(), (size_t) n)) { writeFailed = true; break; }
+                    written += n;
+                    if (progress) progress ((double) written / (double) total);
+                }
+                out.flush();
+                writeFailed = writeFailed || out.getStatus().failed();
             }
-            out.flush();
-            ok = written > 0;
+            else
+            {
+                writeFailed = true;
+            }
         }
         AAsset_close (a);
+
+        if (! writeFailed && written > 0 && written == expected)
+        {
+            target.deleteFile();
+            ok = partial.moveFileTo (target);
+        }
+        if (! ok)
+            partial.deleteFile();
     }
     env->DeleteLocalRef (assetMgrObj);
     return ok;
@@ -338,6 +325,10 @@ juce::String NebulaTideProcessor::librarySearchReport()
     juce::StringArray lines;
     const auto exe = juce::File::getSpecialLocation (juce::File::currentExecutableFile);
     lines.add ("binary: " + exe.getFullPathName());
+
+    const auto pick = userChosenLibraryDir();
+    lines.add ("chosen folder: " + (pick == juce::File() ? juce::String ("(none set)")
+                                                         : pick.getFullPathName()));
     for (auto base : { juce::File::getSpecialLocation (juce::File::commonApplicationDataDirectory)
                            .getChildFile ("Application Support").getChildFile ("Nebula Tide"),
                        juce::File::getSpecialLocation (juce::File::commonApplicationDataDirectory)
@@ -366,6 +357,16 @@ NebulaTideProcessor::NebulaTideProcessor()
 
 static const char* const midiParamIds[6] = { "volume", "pan", "rmix", "rsize", "rdamp", "fade" };
 
+// v2 adds continuous actions at the end of the list rather than in the middle,
+// so MIDI maps saved by v1 still load against the right actions.
+static const char* paramIdForAction (int a)
+{
+    if (a >= 0 && a < 6) return midiParamIds[a];
+    if (a == 34)         return "shim";
+    if (a == 35)         return "shimbloom";
+    return nullptr;
+}
+
 const char* NebulaTideProcessor::midiActionName (int action)
 {
     static const char* names[numMidiActions] = {
@@ -376,7 +377,8 @@ const char* NebulaTideProcessor::midiActionName (int action)
         "Key C", "Key Db", "Key D", "Key Eb", "Key E", "Key F",
         "Key Gb", "Key G", "Key Ab", "Key A", "Key Bb", "Key B",
         "Select Preset 1", "Select Preset 2", "Select Preset 3", "Select Preset 4",
-        "Select Preset 5", "Select Preset 6", "Select Preset 7", "Select Preset 8"
+        "Select Preset 5", "Select Preset 6", "Select Preset 7", "Select Preset 8",
+        "Shimmer", "Shimmer Bloom"
     };
     return (action >= 0 && action < numMidiActions) ? names[action] : "";
 }
@@ -445,6 +447,18 @@ juce::AudioProcessorValueTreeState::ParameterLayout NebulaTideProcessor::createL
     layout.add (std::make_unique<P> ("rdamp",   "Reverb Damp",  0.0f, 1.0f, 0.45f));
     layout.add (std::make_unique<juce::AudioParameterChoice> (
         "rtype", "Reverb Type", juce::StringArray { "Room", "Plate", "Hall" }, 2)); // default Hall
+
+    // ── v2: shimmer. Defaults to 0 so an upgraded v1 session sounds identical.
+    layout.add (std::make_unique<P> ("shim",      "Shimmer",       0.0f, 1.0f, 0.0f));
+    layout.add (std::make_unique<P> ("shimbloom", "Shimmer Bloom", 0.0f, 1.0f, 0.55f));
+    layout.add (std::make_unique<P> ("shimtone",  "Shimmer Tone",  0.0f, 1.0f, 0.45f));
+    layout.add (std::make_unique<P> ("shimsize",  "Shimmer Size",  0.0f, 1.0f, 0.70f));
+    layout.add (std::make_unique<P> ("shimdensity", "Shimmer Density", 0.0f, 1.0f, 0.75f));
+    layout.add (std::make_unique<juce::AudioParameterBool> (
+        "shimmanual", "Shimmer Manual", false));
+    layout.add (std::make_unique<juce::AudioParameterChoice> (
+        "shimpitch", "Shimmer Pitch",
+        juce::StringArray { "Octave", "Fifth", "Octave + Fifth", "High", "Sub + Octave" }, 0));
     return layout;
 }
 
@@ -493,7 +507,7 @@ void NebulaTideProcessor::scanPresets()
     const auto presetsDir = findPresetsDir();
     usingTestLibrary = presetsDir.getFileName() == "Stems";
     if (presetsDir.isDirectory())
-        for (auto& f : presetsDir.findChildFiles (juce::File::findFiles, false, "*.wav;*.mp3;*.ogg;*.flac;*.aiff"))
+        for (auto& f : presetsDir.findChildFiles (juce::File::findFiles, false, "*.wav;*.mp3;*.ogg;*.flac;*.aiff;*.aif"))
         {
             PresetSource src;
             src.file = f;
@@ -553,6 +567,12 @@ void NebulaTideProcessor::scanPresets()
 
     applyManifest();
 
+    // The shipped library is loaded above; the person's own presets are added
+    // on top of it, never instead of it. Scanning them before this point would
+    // have made one user preset suppress the whole encrypted container, since
+    // that is only opened when nothing else supplied any sounds.
+    scanUserContent();
+
     // ── FX / texture sounds from a plain folder (author mode) ──
     if (presetsDir.isDirectory())
     {
@@ -569,6 +589,42 @@ void NebulaTideProcessor::scanPresets()
 
 // Every .ntlib the app can see: beside/inside its own bundle first (so a plugin
 // always finds the copy shipped with it), then the shared install location.
+// The path the person picked, remembered across launches and shared by the
+// app and every plugin format. Kept with the other per-user settings rather
+// than in the library folder, which may be the very thing that is missing.
+static juce::File libraryPointerFile()
+{
+    return productDataDir().getChildFile ("library-path.txt");
+}
+
+juce::File NebulaTideProcessor::userChosenLibraryDir()
+{
+    const auto f = libraryPointerFile();
+    if (! f.existsAsFile()) return {};
+    const juce::File dir (f.loadFileAsString().trim());
+    return dir.isDirectory() ? dir : juce::File();
+}
+
+void NebulaTideProcessor::setUserChosenLibraryDir (const juce::File& dir)
+{
+    const auto f = libraryPointerFile();
+    f.getParentDirectory().createDirectory();
+    if (dir == juce::File()) f.deleteFile();
+    else                     f.replaceWithText (dir.getFullPathName());
+}
+
+juce::File NebulaTideProcessor::defaultLibraryDir()
+{
+    return juce::File::getSpecialLocation (juce::File::commonApplicationDataDirectory)
+               .getChildFile ("Nebula Tide");
+}
+
+juce::File NebulaTideProcessor::currentLibraryFile()
+{
+    const auto all = findLibraryFiles();
+    return all.isEmpty() ? juce::File() : all.getFirst();
+}
+
 juce::Array<juce::File> NebulaTideProcessor::findLibraryFiles()
 {
     juce::Array<juce::File> found;
@@ -578,6 +634,10 @@ juce::Array<juce::File> NebulaTideProcessor::findLibraryFiles()
         for (auto& f : dir.findChildFiles (juce::File::findFiles, false, "*.ntlib"))
             if (! found.contains (f)) found.add (f);
     };
+
+    // A folder the person chose themselves is searched first and wins: it is
+    // the deliberate answer to whatever went wrong with the install.
+    addFrom (userChosenLibraryDir());
 
     // inside this binary's bundle (VST3/AU/app), walking up a few levels
     auto dir = juce::File::getSpecialLocation (juce::File::currentExecutableFile).getParentDirectory();
@@ -605,6 +665,12 @@ juce::Array<juce::File> NebulaTideProcessor::findLibraryFiles()
     }
     addFrom (juce::File::getSpecialLocation (juce::File::globalApplicationsDirectory)
                  .getChildFile ("Nebula Tide"));
+
+   #if JUCE_ANDROID
+    // Where installBundledLibrary() unpacks the library on first launch. It was
+    // never searched, so even a successful copy would not have been found.
+    addFrom (userLibraryDir().getParentDirectory());
+   #endif
 
     return found;
 }
@@ -688,10 +754,20 @@ void NebulaTideProcessor::applyManifest()
     presets = std::move (ordered);
 }
 
-void NebulaTideProcessor::prepareToPlay (double sampleRate, int)
+void NebulaTideProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     deviceSampleRate = sampleRate;
     reverb.setSampleRate (sampleRate);
+    shimmerFx.prepare (sampleRate);
+
+    // Sized and zeroed before any audio arrives, so nothing downstream can
+    // read scratch memory that has not been written yet.
+    const int block = juce::jmax (1, samplesPerBlock);
+    dryBuf.setSize (2, block);    dryBuf.clear();
+    wetBuf.setSize (2, block);    wetBuf.clear();
+    shimReturn.setSize (2, block); shimReturn.clear();
+    dryGainSm.reset (sampleRate, 0.01);
+    wetGainSm.reset (sampleRate, 0.01);
 }
 
 // Audio comes either from a plain file (author mode) or is decrypted out of the
@@ -752,14 +828,42 @@ void NebulaTideProcessor::startSource (const PresetSource& src)
             return;
 
         const juce::SpinLock::ScopedLockType sl (voiceLock);
+
+        // Where the drone has got to, taken from whichever voice is currently
+        // loudest. Starting the new key from the top of its file instead makes
+        // a key change sound like a restart rather than a crossfade — the pad
+        // jumps back to its opening swell while the old one is mid-flow.
+        double elapsedSeconds = 0.0;
+        float loudest = -1.0f;
+        for (auto& v : voices)
+            if (v.active && v.gain > loudest)
+            {
+                loudest = v.gain;
+                elapsedSeconds = v.sourceSampleRate > 0.0 ? v.position / v.sourceSampleRate : 0.0;
+            }
+
         for (auto& v : voices)
             v.targetGain = 0.0f;
 
-        auto& v = voices[nextVoice];
-        nextVoice = (nextVoice + 1) % maxVoices;
+        // Take the quietest voice. Round-robin would overwrite whichever came
+        // next even if it was still at full level, cutting it dead mid-fade —
+        // audible as a jump whenever chords moved faster than the crossfade.
+        int slot = 0;
+        for (int i = 1; i < maxVoices; ++i)
+            if (voices[i].gain < voices[slot].gain)
+                slot = i;
+
+        auto& v = voices[slot];
+        nextVoice = (slot + 1) % maxVoices;
         v.buffer = std::move (loaded);
         v.sourceSampleRate = reader->sampleRate;
-        v.position = 0.0;
+
+        const int len = v.buffer.getNumSamples();
+        double pos = elapsedSeconds * v.sourceSampleRate;
+        if (len > 0)
+            pos = std::fmod (juce::jmax (0.0, pos), (double) len);
+        v.position = (loudest > 0.0f) ? pos : 0.0;
+
         v.gain = 0.0f;
         v.targetGain = 1.0f;
         v.active = true;
@@ -953,11 +1057,29 @@ void NebulaTideProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
     //   24 C1 = FX star toggle · 25 C#1 = texture toggle · 26 D1 = next FX ·
     //   27 D#1 = next texture · 28 E1 = stop everything
     // Program change = preset. CC7 volume · CC10 pan · CC91 reverb mix.
+    // Notes on the aux channel drive FX and textures, never the pad, so they
+    // must not count toward note gating.
+    auto countsAsKey = [] (const juce::MidiMessage& msg)
+    {
+        return msg.getChannel() != auxMidiChannel && zoneOf (msg.getNoteNumber()) == 1;
+    };
+
     for (const auto meta : midi)
     {
         const auto m = meta.getMessage();
         const bool isCC = m.isController();
         const bool isNote = m.isNoteOn();
+
+        // Pedals are discarded before anything else can see them. Nebula Tide
+        // has no use for sustain — the pad already sustains — and letting it
+        // through meant it could be MIDI-learned by accident and, worse, fed
+        // the chord follower. Sustain (64), sostenuto (66) and soft (67).
+        if (isCC)
+        {
+            const int cc = m.getControllerNumber();
+            if (cc == 64 || cc == 66 || cc == 67)
+                continue;
+        }
 
         // note gating (Kontakt-style): release of the last held KEY-zone note fades the pad
         if (m.isNoteOff() || m.isAllNotesOff())
@@ -971,9 +1093,9 @@ void NebulaTideProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
             else if (n >= 0 && n < 128)
             {
                 heldKeys[n].store (false);
-                if (zoneOf (n) == 1 && heldNotes.load() > 0) heldNotes.fetch_sub (1);
+                if (countsAsKey (m) && heldNotes.load() > 0) heldNotes.fetch_sub (1);
             }
-            if (noteGate.load() && heldNotes.load() == 0 && zoneOf (n) == 1)
+            if (noteGate.load() && heldNotes.load() == 0 && countsAsKey (m))
                 dispatch ([this] { if (heldNotes.load() == 0) stopAll(); });
             continue;
         }
@@ -982,7 +1104,7 @@ void NebulaTideProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
             const int n = m.getNoteNumber();
             if (n >= 0 && n < 128) heldKeys[n].store (true);
             lastNote.store (n);
-            if (zoneOf (n) == 1) heldNotes.fetch_add (1);
+            if (countsAsKey (m)) heldNotes.fetch_add (1);
         }
 
         if (! isCC && ! isNote && ! m.isProgramChange())
@@ -1015,11 +1137,11 @@ void NebulaTideProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
             if (binding[a].load() != match) continue;
             consumed = true;
 
-            if (a < 6)              // continuous parameter
+            if (const char* pid = paramIdForAction (a))   // continuous parameter
             {
                 const float v = isCC ? (float) m.getControllerValue() / 127.0f
                                      : m.getFloatVelocity();
-                if (auto* prm = apvts.getParameter (midiParamIds[a]))
+                if (auto* prm = apvts.getParameter (pid))
                     prm->setValueNotifyingHost (v);
             }
             else                    // command: notes fire directly; CCs on rising edge
@@ -1031,10 +1153,29 @@ void NebulaTideProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
             }
         }
 
+        // ── the aux channel always wins, in either mode ──
+        // FX and textures answer on their own MIDI channel, where nothing a
+        // player does can reach them. Note-on starts the sound outright rather
+        // than toggling, so a clip dropped on a timeline plays the same way
+        // every time instead of depending on what was already running.
+        if (! consumed && isNote && m.getChannel() == auxMidiChannel)
+        {
+            const int n = m.getNoteNumber();
+            const int cat = (n >= texZoneLo) ? 1 : 0;
+            const int idx = n - (cat == 1 ? texZoneLo : fxZoneLo);
+            dispatch ([this, cat, idx]
+            {
+                if (idx >= 0 && idx < getAuxSounds (cat).size())
+                    triggerAux (cat, idx);
+            });
+            continue;
+        }
+
         // unbound notes route by key zone
         if (! consumed && isNote)
         {
             const int n = m.getNoteNumber();
+
             switch (zoneOf (n))
             {
                 case 1:     // KEYS C3..B4 → musical key by pitch class
@@ -1075,6 +1216,12 @@ void NebulaTideProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
     }
     midi.clear();
 
+    // Host tempo, so a dragged MIDI clip lands at the project's tempo.
+    if (auto* ph = getPlayHead())
+        if (const auto pos = ph->getPosition())
+            if (const auto bpm = pos->getBpm())
+                hostBpm.store (*bpm);
+
     buffer.clear();
 
     const float fadeSeconds = apvts.getRawParameterValue ("fade")->load();
@@ -1112,14 +1259,110 @@ void NebulaTideProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
             rp.width    = 1.0f;
             break;
     }
-    rp.wetLevel = mix * 0.7f;
-    rp.dryLevel = 1.0f - mix * 0.4f;
+    // The reverb runs fully wet into a scratch buffer and the dry/wet balance is
+    // applied afterwards. Mathematically identical to letting juce::Reverb mix
+    // it (both gains are linear), but it hands us the bare tail — which is what
+    // the shimmer has to feed on.
+    // juce::Reverb scales dryLevel by 2 and wetLevel by 3 internally, and ramps
+    // both over 10 ms. Reproducing the factors AND the ramp keeps v1's balance
+    // exactly and stops the Mix knob zippering now that we mix by hand.
+    dryGainSm.setTargetValue (2.0f * (1.0f - mix * 0.4f));
+    wetGainSm.setTargetValue (mix * 0.7f);
+    rp.wetLevel = 1.0f;
+    rp.dryLevel = 0.0f;
     reverb.setParameters (rp);
 
-    if (buffer.getNumChannels() >= 2)
-        reverb.processStereo (buffer.getWritePointer (0), buffer.getWritePointer (1), buffer.getNumSamples());
-    else if (buffer.getNumChannels() == 1)
-        reverb.processMono (buffer.getWritePointer (0), buffer.getNumSamples());
+    const int numSamples = buffer.getNumSamples();
+    const int numCh = juce::jmin (2, buffer.getNumChannels());
+
+    // One knob drives the whole effect through the macro curve, unless the
+    // player has taken the destinations over by hand (MANUAL in Settings).
+    const float shimKnob = apvts.getRawParameterValue ("shim")->load();
+    const bool  manual   = apvts.getRawParameterValue ("shimmanual")->load() > 0.5f;
+    const auto  mac      = shimmer::macroAt (shimKnob);
+
+    shimmerFx.setParams (manual ? shimKnob : mac.amount,
+                         manual ? apvts.getRawParameterValue ("shimbloom")->load() : mac.bloom,
+                         manual ? apvts.getRawParameterValue ("shimtone")->load()  : mac.tone,
+                         (int) apvts.getRawParameterValue ("shimpitch")->load(),
+                         manual ? apvts.getRawParameterValue ("shimsize")->load()  : mac.stack,
+                         manual ? apvts.getRawParameterValue ("shimdensity")->load() : mac.density);
+
+    dryBuf.setSize (numCh, numSamples, false, false, true);
+    wetBuf.setSize (2, numSamples, false, false, true);
+    for (int ch = 0; ch < numCh; ++ch)
+        dryBuf.copyFrom (ch, 0, buffer, ch, 0, numSamples);
+
+    // The shimmer's return joins the pad at the reverb's input, so the shifted
+    // tail is reverberated by the same space and rises again on the next pass.
+    // That shared loop is the whole effect; a separate reverb sounds bolted on.
+    // ── shimmer as an insert ──────────────────────────────────────────
+    // The pad goes INTO the shifter, not past it. Feeding the shifter from the
+    // reverb's wet tail instead made this a send: the pad's own sound never
+    // entered the effect, so the octave and the pad never fused and it read as
+    // two things playing in parallel.
+    //
+    // Scratch buffers are only ever read after being written, and are cleared
+    // on any resize - adding an unwritten one into the reverb input is what
+    // turned the shimmer into static.
+    if (shimReturn.getNumChannels() != 2 || shimReturn.getNumSamples() != numSamples)
+    {
+        shimReturn.setSize (2, numSamples, false, false, true);
+        shimReturn.clear();
+    }
+    if (shimSource.getNumChannels() != 2 || shimSource.getNumSamples() != numSamples)
+    {
+        shimSource.setSize (2, numSamples, false, false, true);
+        shimSource.clear();
+    }
+    if (prevTail.getNumChannels() != 2 || prevTail.getNumSamples() != numSamples)
+    {
+        prevTail.setSize (2, numSamples, false, false, true);
+        prevTail.clear();
+    }
+
+    if (shimmerFx.isActive())
+    {
+        // shifter input = the pad itself, plus last block's tail for the climb
+        const float fb = shimmerFx.getFeedback();
+        for (int ch = 0; ch < 2; ++ch)
+        {
+            const int src = juce::jmin (ch, numCh - 1);
+            shimSource.copyFrom (ch, 0, buffer, src, 0, numSamples);
+            shimSource.addFrom  (ch, 0, prevTail, ch, 0, numSamples, fb);
+        }
+
+        shimmerFx.shift (shimSource, shimReturn);
+
+        // the shifted signal joins the pad on its way into the reverb
+        for (int ch = 0; ch < numCh; ++ch)
+            buffer.addFrom (ch, 0, shimReturn, ch, 0, numSamples);
+    }
+    else
+    {
+        shimReturn.clear();
+        prevTail.clear();
+    }
+
+    for (int ch = 0; ch < numCh; ++ch)
+        wetBuf.copyFrom (ch, 0, buffer, ch, 0, numSamples);
+    if (numCh == 1)
+        wetBuf.copyFrom (1, 0, buffer, 0, 0, numSamples);
+
+    reverb.processStereo (wetBuf.getWritePointer (0), wetBuf.getWritePointer (1), numSamples);
+
+    if (shimmerFx.isActive())
+        for (int ch = 0; ch < 2; ++ch)
+            prevTail.copyFrom (ch, 0, wetBuf, ch, 0, numSamples);
+
+    for (int i = 0; i < numSamples; ++i)
+    {
+        const float dg = dryGainSm.getNextValue();
+        const float wg = wetGainSm.getNextValue();
+        for (int ch = 0; ch < numCh; ++ch)
+            buffer.setSample (ch, i, dryBuf.getSample (ch, i) * dg
+                                   + wetBuf.getSample (ch, i) * wg);
+    }
 
     // ── FX / texture stars: post-reverb, so they ride the volume/pan knobs ──
     {
@@ -1218,3 +1461,342 @@ juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {
     return new NebulaTideProcessor();
 }
+
+//==============================================================================
+// â”€â”€ User content â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Everything a person builds themselves lives here, as plain audio in a folder
+// they own. Deliberately separate from userLibraryDir(), which is where the
+// Android build unpacks the SHIPPED library â€” mixing the two would put their
+// pads and ours in the same place and make "delete my preset" dangerous.
+//
+//   <user data>/Nebula Tide/User/
+//       My_Pad_C.wav, My_Pad_D.wav, ...      pads, one file per key
+//       fx/           textures/               their own one-shots
+//       user-presets.json                     names, colours, reverb defaults
+//==============================================================================
+// ── Where this product keeps its data ────────────────────────────────────
+// Documents/Amanorsac Studio/<Product>/ is the company convention (Folder
+// Structure Standard). One helper, so the presets, the library pointer and
+// anything added later cannot drift apart from each other or from the standard.
+//
+// Licence files are the deliberate exception and stay in LOCALAPPDATA: they are
+// DPAPI-encrypted and bound to one machine, and Documents is commonly synced to
+// OneDrive, which would carry a device-bound proof to a machine it was never
+// issued for.
+//
+// Android is the other exception. There, Documents is the phone's shared
+// storage, which the app is not allowed to write to, so the first-launch copy
+// of the sound library failed and every install showed "could not be
+// installed". The app's own private storage is the right home on a phone.
+static juce::File productDataDir()
+{
+   #if JUCE_ANDROID
+    const auto base = juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory);
+   #else
+    const auto base = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory);
+   #endif
+    return base.getChildFile ("Amanorsac Studio")
+               .getChildFile ("Nebula Tide");
+}
+
+// Anything the previous layout wrote is moved across once, quietly, so an
+// upgrade does not look like every user preset was deleted.
+static void migrateLegacyDataOnce()
+{
+    static bool done = false;
+    if (done) return;
+    done = true;
+
+    const auto legacy = juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
+                            .getChildFile ("Nebula Tide");
+    if (! legacy.isDirectory()) return;
+
+    const auto dest = productDataDir();
+    dest.createDirectory();
+
+    for (auto& item : legacy.findChildFiles (juce::File::findFilesAndDirectories, false))
+    {
+        const auto target = dest.getChildFile (item.getFileName());
+        if (target.exists()) continue;              // never overwrite newer data
+        if (item.isDirectory()) item.copyDirectoryTo (target);
+        else                    item.copyFileTo (target);
+    }
+}
+
+juce::File NebulaTideProcessor::userContentDir()
+{
+    migrateLegacyDataOnce();
+    return productDataDir().getChildFile ("User");
+}
+
+bool NebulaTideProcessor::isUserAux (const AuxSound& s)
+{
+    return s.file.existsAsFile() && s.file.isAChildOf (userContentDir());
+}
+
+static juce::String sanitiseName (const juce::String& raw)
+{
+    // Names become file names, so anything a filesystem would refuse goes.
+    auto n = raw.trim().retainCharacters (
+        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ()&-");
+    return n.substring (0, 48).trim();
+}
+
+void NebulaTideProcessor::scanUserContent()
+{
+    const auto dir = userContentDir();
+    if (! dir.isDirectory())
+        return;
+
+    const char* audio = "*.wav;*.mp3;*.ogg;*.flac;*.aiff";
+
+    juce::Array<PresetGroup> mine;
+    for (const auto& s : usercontent::scanFolder (dir))
+    {
+        PresetGroup g;
+        g.name = s.name;
+        g.isUser = true;
+        for (int k = 0; k < 12; ++k)
+            if (s.keys[k].existsAsFile())
+                g.keys[k].file = s.keys[k];
+        mine.add (g);
+    }
+
+    // colours and reverb defaults the person set in the Studio dashboard
+    const auto manifest = dir.getChildFile ("user-presets.json");
+    if (manifest.existsAsFile())
+    {
+        const auto parsed = juce::JSON::parse (manifest.loadFileAsString());
+        if (const auto* arr = parsed.getProperty ("presets", {}).getArray())
+            for (const auto& entry : *arr)
+            {
+                const juce::String name = entry.getProperty ("name", "").toString();
+                for (auto& g : mine)
+                {
+                    if (! g.name.equalsIgnoreCase (name)) continue;
+                    const juce::String hex = entry.getProperty ("colour", "").toString();
+                    if (hex.startsWithChar ('#') && hex.length() == 7)
+                        g.colour = juce::Colour::fromString ("ff" + hex.substring (1));
+                    const auto rv = entry.getProperty ("reverb", {});
+                    if (rv.isObject())
+                    {
+                        g.hasReverbDefaults = true;
+                        const juce::String t = rv.getProperty ("type", "hall").toString();
+                        g.rType = t == "room" ? 0 : (t == "plate" ? 1 : 2);
+                        g.rMix  = (float) (double) rv.getProperty ("mix",  0.4);
+                        g.rSize = (float) (double) rv.getProperty ("size", 0.85);
+                        g.rDamp = (float) (double) rv.getProperty ("damp", 0.45);
+                    }
+                    g.defaultFx  = entry.getProperty ("fx", "").toString();
+                    g.defaultTex = entry.getProperty ("texture", "").toString();
+                    break;
+                }
+            }
+    }
+
+    for (auto& g : mine)
+        presets.add (g);
+
+    auto scanCat = [audio] (const juce::File& sub, juce::Array<AuxSound>& into)
+    {
+        if (! sub.isDirectory()) return;
+        for (auto& f : sub.findChildFiles (juce::File::findFiles, false, audio))
+            into.add ({ f.getFileNameWithoutExtension().replaceCharacters ("_-", "  "), f, {} });
+    };
+    scanCat (dir.getChildFile ("fx"), fxSounds);
+    scanCat (dir.getChildFile ("textures"), texSounds);
+}
+
+// Rewrites user-presets.json from whatever user groups are currently loaded.
+void NebulaTideProcessor::writeUserManifest()
+{
+    juce::Array<juce::var> arr;
+    // Only presets that still have audio. Entries for presets whose files are
+    // gone are dead weight, and a stale one reappearing in the list after a
+    // delete is exactly the bug this file is meant not to have.
+    const auto onDisk = usercontent::scanFolder (userContentDir());
+    auto stillThere = [&onDisk] (const juce::String& n)
+    {
+        for (const auto& s : onDisk)
+            if (s.name.equalsIgnoreCase (n) && s.numKeys() > 0) return true;
+        return false;
+    };
+
+    for (const auto& g : presets)
+    {
+        if (! g.isUser || ! stillThere (g.name)) continue;
+        auto* o = new juce::DynamicObject();
+        o->setProperty ("name", g.name);
+        o->setProperty ("colour", "#" + g.colour.toDisplayString (false).toLowerCase());
+        auto* rv = new juce::DynamicObject();
+        rv->setProperty ("type", g.rType == 0 ? "room" : (g.rType == 1 ? "plate" : "hall"));
+        rv->setProperty ("mix", g.rMix);
+        rv->setProperty ("size", g.rSize);
+        rv->setProperty ("damp", g.rDamp);
+        o->setProperty ("reverb", juce::var (rv));
+        if (g.defaultFx.isNotEmpty())  o->setProperty ("fx", g.defaultFx);
+        if (g.defaultTex.isNotEmpty()) o->setProperty ("texture", g.defaultTex);
+        arr.add (juce::var (o));
+    }
+    auto* root = new juce::DynamicObject();
+    root->setProperty ("presets", arr);
+
+    const auto dir = userContentDir();
+    dir.createDirectory();
+    dir.getChildFile ("user-presets.json").replaceWithText (juce::JSON::toString (juce::var (root)));
+}
+
+juce::Result NebulaTideProcessor::saveUserPreset (const juce::String& rawName, juce::Colour colour,
+                                                  const juce::Array<UserSlot>& slots,
+                                                  int reverbType, float rMix, float rSize, float rDamp,
+                                                  const juce::String& defaultFx,
+                                                  const juce::String& defaultTex)
+{
+    const auto name = sanitiseName (rawName);
+    if (name.isEmpty())
+        return juce::Result::fail ("Give the preset a name.");
+
+    // A user preset must not shadow one of ours: same name, two entries, and
+    // no way to tell which is which in the list.
+    for (const auto& g : presets)
+        if (! g.isUser && g.name.equalsIgnoreCase (name))
+            return juce::Result::fail (name + " is a built-in preset. Choose another name.");
+
+    bool any = false;
+    for (const auto& s : slots)
+        if (s.file.existsAsFile()) { any = true; break; }
+    if (! any)
+        return juce::Result::fail ("Add at least one key before saving.");
+
+    const auto dir = userContentDir();
+    if (! dir.createDirectory())
+        return juce::Result::fail ("Could not create " + dir.getFullPathName());
+
+    const auto fileStem = name.replaceCharacter (' ', '_');
+
+    // Clear this preset's old files first, so removing a key really removes it.
+    for (auto& old : dir.findChildFiles (juce::File::findFiles, false, fileStem + "_*"))
+        old.deleteFile();
+
+    for (const auto& s : slots)
+    {
+        if (! s.file.existsAsFile() || s.key < 0 || s.key > 11) continue;
+        const auto ext = s.file.getFileExtension().trimCharactersAtStart (".");
+        const auto dest = dir.getChildFile (fileStem + "_" + keynames::display[s.key] + "." + ext);
+        if (! s.file.copyFileTo (dest))
+            return juce::Result::fail ("Could not copy " + s.file.getFileName());
+    }
+
+    // Update (or add) the group in memory so the manifest write sees it.
+    bool found = false;
+    for (auto& g : presets)
+        if (g.isUser && g.name.equalsIgnoreCase (name))
+        {
+            g.colour = colour; g.hasReverbDefaults = true;
+            g.rType = reverbType; g.rMix = rMix; g.rSize = rSize; g.rDamp = rDamp;
+            g.defaultFx = defaultFx; g.defaultTex = defaultTex;
+            found = true;
+            break;
+        }
+    if (! found)
+    {
+        PresetGroup g;
+        g.name = name; g.isUser = true; g.colour = colour;
+        g.hasReverbDefaults = true;
+        g.rType = reverbType; g.rMix = rMix; g.rSize = rSize; g.rDamp = rDamp;
+        g.defaultFx = defaultFx; g.defaultTex = defaultTex;
+        presets.add (g);
+    }
+    writeUserManifest();
+    return juce::Result::ok();
+}
+
+juce::Result NebulaTideProcessor::deleteUserPreset (const juce::String& name)
+{
+    for (const auto& g : presets)
+        if (g.name.equalsIgnoreCase (name) && ! g.isUser)
+            return juce::Result::fail ("Built-in presets cannot be deleted.");
+
+    const auto dir = userContentDir();
+
+    // Ask the scanner which files belong to this preset, rather than guessing
+    // a filename from the name. Two reasons. It is the same code that decides
+    // what appears in the list, so the two can never disagree about which
+    // files are which preset. And a wildcard on the stem was wrong anyway:
+    // deleting "Aurora" with "Aurora_*" also swallowed "Aurora 2", because
+    // that preset's files are named "Aurora_2_<key>".
+    juce::Array<juce::File> doomed;
+    for (const auto& g : usercontent::scanFolder (dir))
+    {
+        if (! g.name.equalsIgnoreCase (name)) continue;
+        for (const auto& k : g.keys)
+            if (k.existsAsFile()) doomed.add (k);
+        break;
+    }
+
+    if (doomed.isEmpty())
+    {
+        // Nothing on disk. The entry is a leftover in the manifest, so drop it
+        // from there and report success: the person asked for it to be gone
+        // and it is gone.
+        bool removedGhost = false;
+        for (int i = presets.size(); --i >= 0;)
+            if (presets.getReference (i).isUser && presets.getReference (i).name.equalsIgnoreCase (name))
+            {
+                presets.remove (i);
+                removedGhost = true;
+            }
+        writeUserManifest();
+        return removedGhost ? juce::Result::ok()
+                            : juce::Result::fail ("Could not find " + name + " to delete.");
+    }
+
+    // Failures were ignored here, which is what made a delete look like it had
+    // worked while the preset came straight back on the next rescan.
+    juce::StringArray stubborn;
+    for (const auto& f : doomed)
+        if (! f.deleteFile())
+            stubborn.add (f.getFileName());
+
+    if (! stubborn.isEmpty())
+        return juce::Result::fail ("Could not delete " + stubborn.joinIntoString (", ")
+                                     + ". Something else may have the file open.");
+
+    for (int i = presets.size(); --i >= 0;)
+        if (presets.getReference (i).isUser && presets.getReference (i).name.equalsIgnoreCase (name))
+            presets.remove (i);
+
+    writeUserManifest();
+    return juce::Result::ok();
+}
+
+juce::Result NebulaTideProcessor::importAuxSound (int cat, const juce::File& source)
+{
+    if (! source.existsAsFile())
+        return juce::Result::fail ("That file no longer exists.");
+
+    const auto sub = userContentDir().getChildFile (cat == 0 ? "fx" : "textures");
+    if (! sub.createDirectory())
+        return juce::Result::fail ("Could not create " + sub.getFullPathName());
+
+    const auto dest = sub.getChildFile (source.getFileName());
+    if (dest.existsAsFile())
+        return juce::Result::fail (source.getFileName() + " is already in your library.");
+    if (! source.copyFileTo (dest))
+        return juce::Result::fail ("Could not copy " + source.getFileName());
+    return juce::Result::ok();
+}
+
+juce::Result NebulaTideProcessor::deleteAuxSound (int cat, const juce::String& name)
+{
+    for (const auto& s : getAuxSounds (cat))
+        if (s.name.equalsIgnoreCase (name))
+        {
+            if (! isUserAux (s))
+                return juce::Result::fail ("Built-in sounds cannot be deleted.");
+            return s.file.deleteFile() ? juce::Result::ok()
+                                       : juce::Result::fail ("Could not delete " + s.file.getFileName());
+        }
+    return juce::Result::fail ("Unknown sound.");
+}
+

@@ -3,6 +3,8 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_dsp/juce_dsp.h>
 #include "NtLibrary.h"
+#include "Shimmer.h"
+#include "License/LicenseClient.h"
 
 // ── Seamless looping ──────────────────────────────────────────────────────
 // Instead of jumping from the last sample back to the first (audible "snap"),
@@ -56,6 +58,10 @@ struct PresetGroup
     int   rType = 2;            // 0 room, 1 plate, 2 hall
     float rMix = 0.4f, rSize = 0.85f, rDamp = 0.45f;
     juce::String defaultFx, defaultTex;   // filenames of default star sounds
+    // Made by the person using the app, in their own folder, as plain audio.
+    // Only these can be edited or deleted from the Studio dashboard; the
+    // shipped library is read-only and stays inside the encrypted container.
+    bool isUser = false;
     bool hasKey (int k) const { return k >= 0 && k < 12 && keys[k].isValid(); }
     int firstAvailableKey() const
     {
@@ -129,12 +135,40 @@ public:
     void reloadLibrary();                       // rescan after installing (message thread)
     static juce::File userLibraryDir();         // per-user writable presets folder
 
+    // ── User content (v2) ────────────────────────────────────────────
+    // Presets people build themselves. Kept deliberately apart from the
+    // shipped library: plain audio in a folder they own, so it is theirs to
+    // move, back up and delete. Nothing here is encrypted — there is nothing
+    // of ours in it to protect.
+    static juce::File userContentDir();
+    struct UserSlot { int key = 0; juce::File file; };
+    // Copies the chosen audio into the user folder and rewrites the manifest.
+    juce::Result saveUserPreset (const juce::String& name, juce::Colour colour,
+                                 const juce::Array<UserSlot>& slots,
+                                 int reverbType, float rMix, float rSize, float rDamp,
+                                 const juce::String& defaultFx = {},
+                                 const juce::String& defaultTex = {});
+    juce::Result deleteUserPreset (const juce::String& name);
+    juce::Result importAuxSound (int cat, const juce::File& source);   // 0 fx, 1 texture
+    juce::Result deleteAuxSound (int cat, const juce::String& name);
+    static bool isUserAux (const AuxSound& s);
+
     // Sounds always ship INSIDE the app — nothing is ever downloaded after install.
     // Android: the library is packed into the APK's assets and copied out into
     // userLibraryDir() on first launch (background thread; progress 0..1).
     bool installBundledLibrary (std::function<void (double)> progress);
     bool installBundledLooseFiles (std::function<void (double)> progress);
     static juce::String librarySearchReport();   // diagnostics for the "not found" panel
+
+    // ── Where the sounds live ────────────────────────────────────────
+    // An install can fail to write the shared folder - permissions, disk
+    // space, antivirus - and the app then opens with nothing and no way
+    // forward. A remembered path fixes that without a reinstall, and also
+    // lets people keep 264 MB on a second drive.
+    static juce::File userChosenLibraryDir();
+    static void setUserChosenLibraryDir (const juce::File& dir);
+    static juce::File currentLibraryFile();      // the .ntlib actually in use
+    static juce::File defaultLibraryDir();       // where the installer puts it
 
     // Version notice only — a few hundred bytes, once per launch, never any
     // content. No connection = no check; the app is fully functional offline.
@@ -164,6 +198,12 @@ public:
     //   KEYS     C3..B4  (48..71)  pitch class = musical key
     //   TEXTURES C5..B5  (72..83)  one note per texture
     enum { fxZoneLo = 36, fxZoneHi = 47, keyZoneLo = 48, keyZoneHi = 71, texZoneLo = 72, texZoneHi = 83 };
+
+    // FX and textures also answer on a channel of their own, in both modes.
+    // The note zones sit inside normal playing range, so once chord mode hands
+    // the keyboard over to chords there has to be a route nothing can collide
+    // with — this is it, and it is what dragged MIDI clips are written to.
+    static constexpr int auxMidiChannel = 16;
     static int zoneOf (int note)   // 0 fx, 1 keys, 2 textures, -1 none
     {
         if (note >= fxZoneLo  && note <= fxZoneHi)  return 0;
@@ -173,6 +213,9 @@ public:
     }
     int  lastNoteOn() const  { return lastNote.load(); }   // for the on-screen keyboard
     std::atomic<bool> heldKeys[128] {};                     // currently held MIDI notes
+
+    // Host tempo, captured for the drag-to-timeline MIDI clip.
+    std::atomic<double> hostBpm { 120.0 };
 
     // sets the size/damp parameter defaults for a reverb category
     void applyReverbPreset (ReverbType type);
@@ -193,8 +236,9 @@ public:
 
     // ── MIDI mapping + learn ─────────────────────────────────────────
     // Actions 0-5 are continuous (parameters), 6-12 are core commands,
-    // 13 = pad play/stop, 14-25 = keys C..B, 26-33 = select preset 1..8.
-    enum { numMidiActions = 34 };
+    // 13 = pad play/stop, 14-25 = keys C..B, 26-33 = select preset 1..8,
+    // 34-35 = shimmer (v2). New actions are appended so saved v1 maps still load.
+    enum { numMidiActions = 36 };
     static const char* midiActionName (int action);
     juce::String bindingText (int action) const;   // "CC 7", "Note C1", "—"
     void startLearn (int action)   { learnTarget.store (action); }
@@ -202,11 +246,17 @@ public:
     int  learningAction() const    { return learnTarget.load(); }
     void clearBinding (int action) { if (action >= 0 && action < numMidiActions) binding[action].store (0); }
 
+    // One client per instance, but one device id, key and proof on disk, so a
+    // machine uses one seat however many plugin windows are open (standard R11).
+    amanorsacstudio::LicenseClient license;
+
     juce::AudioProcessorValueTreeState apvts;
 
 private:
     void scanPresets();
     void applyManifest();
+    void scanUserContent();
+    void writeUserManifest();
     void startSource (const PresetSource&);
     juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
 
@@ -232,6 +282,9 @@ private:
 
     juce::SpinLock voiceLock;
     juce::Reverb reverb;
+    shimmer::Engine shimmerFx;          // v2 — bypassed entirely when amount is 0
+    juce::AudioBuffer<float> dryBuf, wetBuf, shimReturn, shimSource, prevTail;
+    juce::SmoothedValue<float> dryGainSm, wetGainSm;   // match juce::Reverb's 10 ms ramp
     double deviceSampleRate = 44100.0;
 
     // Audio decodes happen on this worker so the UI never freezes; generation
