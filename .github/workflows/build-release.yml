@@ -681,10 +681,17 @@ jobs:
 
             # 1. App Bundle for Google Play. Play takes the payment, so this
             #    build has no licence key screen.
-            gradle_run bundleRelease_Release
+            gradle_run -PnebulaUnsigned=1 bundleRelease_Release
             AAB=$(find app/build/outputs/bundle -iname "*.aab" | head -1)
             jarsigner -keystore release.keystore -storepass "$ANDROID_KEYSTORE_PASSWORD" \
               -signedjar ../../NebulaTide-V2-Android-Play.aab "$AAB" "$ANDROID_KEY_ALIAS"
+
+            # Play refuses a bundle with more than one certificate chain, and
+            # that is exactly what a second signature produces. Count them here
+            # rather than finding out at upload time.
+            CHAINS=$(unzip -l ../../NebulaTide-V2-Android-Play.aab | grep -ciE 'META-INF/.*\.(RSA|DSA|EC)$' || true)
+            echo "certificate chains in the bundle: $CHAINS"
+            [ "$CHAINS" = "1" ] || { echo "::error::the App Bundle has $CHAINS certificate chains; Play accepts exactly 1"; exit 1; }
 
             # 2. APK for the website: asks for a licence key, carries the sounds,
             #    and has its own app id so it installs beside a Play copy. No
@@ -694,7 +701,7 @@ jobs:
             # nothing compiled for the Play bundle may be reused here.
             rm -rf app/.cxx app/build/intermediates/cxx app/build/intermediates/merged_native_libs \
                    app/build/intermediates/stripped_native_libs
-            gradle_run -PnebulaWebsite=1 assembleRelease_Release
+            gradle_run -PnebulaWebsite=1 -PnebulaUnsigned=1 assembleRelease_Release
             APK=$(find app/build/outputs/apk -iname "*release*.apk" | head -1)
             "$ANDROID_HOME/build-tools/$BT/zipalign" -p -f 4 "$APK" aligned.apk
             "$ANDROID_HOME/build-tools/$BT/apksigner" sign --ks release.keystore \

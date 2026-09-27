@@ -47,7 +47,12 @@ android {
              initWith release
              debuggable    false
              jniDebuggable false
-             signingConfig signingConfigs.juceSigning
+             // Projucer signs even release builds with Android Studio's debug
+             // key. CI then signs again with the real key, and the App Bundle
+             // arrived at Play carrying two certificate chains, which Play
+             // refuses. -PnebulaUnsigned=1 leaves it unsigned here so the
+             // release key is the only signature on it.
+             signingConfig project.hasProperty("nebulaUnsigned") ? null : signingConfigs.juceSigning
          }
     }
 
