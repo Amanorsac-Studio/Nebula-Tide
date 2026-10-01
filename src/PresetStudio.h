@@ -1,0 +1,187 @@
+#pragma once
+#include "PluginProcessor.h"
+#include "PresetShare.h"
+#include "AuxLibrary.h"
+#include "FolderImport.h"
+
+// Declared without the default argument: PluginEditor.h declares the same
+// function with one, and a default may only be given once per translation unit.
+namespace ui
+{
+    void drawBloom (juce::Graphics&, juce::Point<float>, float, juce::Colour, float intensity);
+    juce::Font titleFont (float);
+    juce::Font labelFont (float);
+    juce::Font bodyFont  (float);
+}
+
+//==============================================================================
+// ── Studio ────────────────────────────────────────────────────────────────
+//
+// Nebula Forge, brought inside the app as a second dashboard. Forge ran as a
+// local web server, which was fine for authoring the shipped library on one
+// machine but is no use to somebody who just installed the plugin — so the
+// parts that matter are rebuilt here natively.
+//
+// What people make is theirs: plain audio copied into their own folder, never
+// into the encrypted container. They can find it, back it up, and take it with
+// them. The shipped library stays read-only and stays encrypted, and the two
+// never mix — a built-in preset cannot be edited or deleted from here, and a
+// user preset is not allowed to take a built-in name.
+
+// One of the twelve key slots: drop a file on it, or click to browse.
+class KeySlot : public juce::Component,
+                public juce::FileDragAndDropTarget
+{
+public:
+    KeySlot (int keyIndex, std::function<void (int)> onBrowse, std::function<void (int, juce::File)> onDropped)
+        : key (keyIndex), browse (std::move (onBrowse)), dropped (std::move (onDropped)) {}
+
+    void paint (juce::Graphics&) override;
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        if (e.mods.isPopupMenu() && file.existsAsFile()) { clear(); return; }
+        if (browse) browse (key);
+    }
+
+    bool isInterestedInFileDrag (const juce::StringArray& files) override
+    {
+        for (const auto& f : files)
+            if (isAudio (f)) return true;
+        return false;
+    }
+    void fileDragEnter (const juce::StringArray&, int, int) override { hovering = true;  repaint(); }
+    void fileDragExit  (const juce::StringArray&)           override { hovering = false; repaint(); }
+    void filesDropped (const juce::StringArray& files, int, int) override
+    {
+        hovering = false;
+        for (const auto& f : files)
+            if (isAudio (f))
+            {
+                // Fill the slot itself. This used to only report the drop to
+                // Studio, whose handler just repaints, so a drop reached the slot
+                // and was thrown away. Browsing worked because it set the file.
+                setFile (juce::File (f));
+                if (dropped) dropped (key, juce::File (f));
+                break;
+            }
+        repaint();
+    }
+
+    void setFile (juce::File f) { file = std::move (f); repaint(); }
+    // juce::File() spelled out: clang reads a bare {} here as ambiguous
+    // between the copy and move assignment operators, so this does not
+    // compile on macOS or iOS even though MSVC accepts it.
+    void clear() { file = juce::File(); if (dropped) dropped (key, {}); repaint(); }
+    juce::File getFile() const { return file; }
+    int getKey() const { return key; }
+
+    static bool isAudio (const juce::String& path)
+    {
+        const auto e = path.fromLastOccurrenceOf (".", false, false).toLowerCase();
+        return e == "wav" || e == "mp3" || e == "ogg" || e == "flac" || e == "aiff" || e == "aif";
+    }
+
+private:
+    int key;
+    juce::File file;
+    bool hovering = false;
+    std::function<void (int)> browse;
+    std::function<void (int, juce::File)> dropped;
+};
+
+//==============================================================================
+class PresetStudio : public juce::Component,
+                     public juce::FileDragAndDropTarget,
+                     private juce::Timer
+{
+public:
+    PresetStudio (NebulaTideProcessor&, std::function<void()> onLibraryChanged);
+    ~PresetStudio() override;
+
+    void paint (juce::Graphics&) override;
+    void resized() override;
+    void visibilityChanged() override { if (isVisible()) refreshList(); }
+
+    // Dropping a shared preset anywhere on this panel imports it. The slots
+    // have their own drop handling for raw audio and take priority, so a file
+    // only reaches here if it missed them.
+    bool isInterestedInFileDrag (const juce::StringArray& files) override
+    {
+        for (const auto& f : files)
+            if (f.endsWithIgnoreCase (presetshare::extension)) return true;
+        return false;
+    }
+    void filesDropped (const juce::StringArray& files, int, int) override
+    {
+        for (const auto& f : files)
+            if (f.endsWithIgnoreCase (presetshare::extension)) { acceptPack (juce::File (f)); return; }
+    }
+
+private:
+    void timerCallback() override;
+    void refreshList();          // rebuild the user-preset list from the processor
+    void loadPreset (const juce::String& name);
+    void startNew();
+    void save();
+    void removeCurrent();
+    void browseForSlot (int key);
+    void importAux (int cat);
+    void showAuxLibrary();
+    void chooseFolderToImport();
+    void refreshAuxChoices();
+    void sharePreset();          // write the open preset out as one .ntpreset
+    void importPack();           // read someone else's .ntpreset in
+    void acceptPack (const juce::File&);
+    static juce::File makerNameFile();
+    juce::String uniqueUserName (const juce::String& wanted) const;
+    void say (const juce::String& text, bool bad);
+
+    NebulaTideProcessor& processor;
+    std::function<void()> libraryChanged;
+
+    juce::Label   heading, nameLabel, colourLabel, keysLabel, auxLabel, message;
+    juce::TextEditor nameBox;
+    juce::TextButton newBtn { "+ NEW PRESET" }, saveBtn { "SAVE" }, deleteBtn { "DELETE" }, closeBtn { "DONE" };
+    juce::TextButton addFxBtn { "+ FX SOUND" }, addTexBtn { "+ TEXTURE" };
+
+    // Sharing. The maker name is remembered rather than retyped, because a
+    // preset that travels is worth more to its author with a name on it, and
+    // nobody types their own name twice.
+    juce::Label      makerLabel;
+    juce::TextEditor makerBox;
+    juce::TextButton shareBtn { "SHARE..." }, importBtn { "IMPORT..." };
+    std::unique_ptr<juce::FileChooser> shareChooser;
+
+    // Which FX and texture this preset starts with. Stored per preset, so a
+    // shared one arrives with the atmosphere its maker built around it.
+    juce::Label    fxLabel, texLabel;
+    juce::ComboBox fxBox, texBox;
+    std::unique_ptr<AuxLibrary> auxLibrary;
+
+    // Fill all twelve keys from one folder, with the keys guessed from the
+    // file names and shown for checking before anything is imported.
+    juce::TextButton importFolderBtn { "IMPORT FOLDER..." };
+    std::unique_ptr<FolderImport> folderImport;
+    juce::Viewport listView;
+    juce::Component listHolder;
+    juce::OwnedArray<juce::TextButton> listButtons;
+    juce::OwnedArray<KeySlot> slots;
+
+    // A small fixed palette rather than a full colour picker: every one of
+    // these already reads correctly against the background and through the
+    // whole-UI retint, which an arbitrary colour cannot be trusted to do.
+    struct Swatch { juce::Colour colour; juce::Rectangle<int> bounds; };
+    juce::Array<Swatch> swatches;
+    int selectedSwatch = 0;
+    void mouseDown (const juce::MouseEvent&) override;
+
+    juce::ComboBox reverbBox;
+    juce::Slider mixSlider, sizeSlider, dampSlider;
+    juce::Label  mixLabel, sizeLabel, dampLabel;
+
+    juce::String editingName;      // empty while creating a new preset
+    std::unique_ptr<juce::FileChooser> chooser;
+    juce::int64 messageUntil = 0;
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PresetStudio)
+};

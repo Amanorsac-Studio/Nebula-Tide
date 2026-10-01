@@ -1,0 +1,152 @@
+<meta charset="utf-8">
+<title>Nebula Tide — One-Page Brief</title>
+<style>
+  @page { size: A4; margin: 8mm; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family:"Segoe UI",Arial,sans-serif; color:#14181d; font-size:6.7pt; line-height:1.2; }
+  h1 { font-size:14pt; margin:0; }
+  .kicker { font-size:6pt; letter-spacing:.2em; text-transform:uppercase; color:#7a8894; margin:0 0 .5mm; }
+  .sub { font-size:7.2pt; color:#3f4a55; margin:.4mm 0 0; }
+  header { border-bottom:1.2pt solid #14181d; padding-bottom:1.4mm; margin-bottom:2mm;
+           display:flex; justify-content:space-between; align-items:flex-end; }
+  .meta { text-align:right; font-size:6.2pt; color:#5c6874; line-height:1.4; }
+  h2 { font-size:6.4pt; letter-spacing:.15em; text-transform:uppercase; color:#0b5f74;
+       margin:0 0 1mm; padding-bottom:.4mm; border-bottom:.6pt solid #cdd6dd; }
+  h2 span { text-transform:none; letter-spacing:0; color:#8a95a0; font-weight:400; }
+  .row { display:flex; gap:3.5mm; margin-bottom:2mm; }
+  .shot { width:100%; display:block; border:.6pt solid #b9c3cc; }
+  .cap { font-size:5.9pt; color:#7a8894; margin:.7mm 0 0; font-style:italic; line-height:1.25; }
+  table { width:100%; border-collapse:collapse; }
+  td { padding:.25mm 0; vertical-align:top; }
+  td.k { color:#5c6874; width:23%; padding-right:1.2mm; }
+  ul { margin:0; padding-left:3mm; }
+  li { margin-bottom:.2mm; }
+  code { font-family:Consolas,monospace; font-size:6.4pt; }
+  .swatches { display:flex; gap:.7mm; margin:0 0 1.2mm; }
+  .sw { width:7.4mm; height:3.4mm; border:.4pt solid #aab4bd; font-size:4.3pt; color:#fff;
+        display:flex; align-items:flex-end; justify-content:center; }
+  .std { display:flex; gap:3mm; }
+  .std > div { flex:1; padding:1.4mm 1.8mm; border-radius:.8mm; }
+  .keep { background:#e9f5ec; border-left:1.6pt solid #2e7d43; }
+  .stand{ background:#e8f1f8; border-left:1.6pt solid #1c6fa8; }
+  .miss { background:#fdeeed; border-left:1.6pt solid #b3352c; }
+  .std b { display:block; font-size:6.2pt; letter-spacing:.11em; text-transform:uppercase; margin-bottom:.7mm; }
+  .note { font-size:6pt; color:#7a8894; margin:1.8mm 0 0; padding-top:1mm; border-top:.5pt solid #dde3e8; }
+  .ok { color:#2e7d43; font-weight:600; } .pend { color:#b3352c; font-weight:600; }
+</style>
+
+<header>
+  <div>
+    <p class="kicker">Amanorsac Studio · Product One-Page Brief</p>
+    <h1>Nebula Tide</h1>
+    <p class="sub">Ambient drone-pad virtual instrument — standalone app &amp; audio plugin</p>
+  </div>
+  <div class="meta">
+    Version <b>1.3.0</b> · brief generated 2026-09-01<br>
+    Desktop <span class="ok">Released</span> &nbsp;·&nbsp; Mobile <span class="pend">built, unpublished</span>
+  </div>
+</header>
+
+<div class="row">
+  <div style="flex:0 0 86mm">
+    <h2>3 · Main Interface</h2>
+    <img class="shot" src="../../marketing/screenshots/03-main-current.png" alt="Nebula Tide main interface">
+    <p class="cap">Primary interface — Windows standalone v1.3.0, idle. Left star = FX layer · right star = texture layer ·
+      centre = active preset · orbit = the 12 keys · footer = volume, reverb, crossfade, pan.</p>
+  </div>
+  <div style="flex:1">
+    <h2>1 · Product Identity</h2>
+    <table>
+      <tr><td class="k">Category</td><td>Virtual instrument — standalone + VST3 / AU / AUv3</td></tr>
+      <tr><td class="k">Purpose</td><td>A sustained harmonic bed in the right key, in one click</td></tr>
+      <tr><td class="k">Users</td><td>Worship musicians &amp; MDs · ambient producers · live performers</td></tr>
+      <tr><td class="k">Status</td><td><b>Released</b> on Windows &amp; macOS via direct download; iOS/iPadOS &amp; Android build but are <b>unpublished</b></td></tr>
+    </table>
+
+    <h2 style="margin-top:2mm">2 · What It Does</h2>
+    <ul>
+      <li><b>12 real recorded keys per preset</b> — never pitch-shifted</li>
+      <li><b>Key "planets"</b> orbit selector — click to crossfade into a key</li>
+      <li><b>Two star players</b> — FX and texture, independent of the preset</li>
+      <li><b>Room / Plate / Hall</b> reverb · loop crossfade · volume · pan</li>
+      <li><b>MIDI &amp; QWERTY</b> — 34 learnable actions, zoned keyboard, DAW gating</li>
+      <li><b>Living UI</b> — the interface re-tints to the preset colour</li>
+    </ul>
+  </div>
+</div>
+
+<div class="row">
+  <div style="flex:1">
+    <h2>4 · Visual / UX Identity <span>(as built)</span></h2>
+    <div class="swatches">
+      <div class="sw" style="background:#020C16">020C16</div>
+      <div class="sw" style="background:#04283F">04283F</div>
+      <div class="sw" style="background:#16B8D8">16B8D8</div>
+      <div class="sw" style="background:#4FE3FF;color:#0b2630">4FE3FF</div>
+      <div class="sw" style="background:#BDF3FF;color:#0b2630">BDF3FF</div>
+      <div class="sw" style="background:#6FA8BD">6FA8BD</div>
+      <div class="sw" style="background:#FFC96B;color:#3a2a00">FFC96B</div>
+      <div class="sw" style="background:#FF5A6E">FF5A6E</div>
+    </div>
+    <table>
+      <tr><td class="k">Palette</td><td>Navy ground, foam text. Accent is <b>dynamic per preset</b> (cyan default); FX gold and texture red are fixed</td></tr>
+      <tr><td class="k">Surfaces</td><td>Glass panels, 18–22 px radius, over an animated starfield</td></tr>
+      <tr><td class="k">Type</td><td>Platform sans, uppercase, wide tracking; none bundled</td></tr>
+      <tr><td class="k">Controls</td><td>Text-only buttons · rotary knobs with bloom halo and value arc · 6 px sliders. Hover brighter, selected bloom, active breathing</td></tr>
+      <tr><td class="k">Patterns</td><td>No dropdowns (arrows) · no tabs (Settings overlay) · no meters — level drives the starfield</td></tr>
+      <tr><td class="k">Motion</td><td>60 fps starfield, aurora, breathing pad, colour morph, bloom; OpenGL on desktop</td></tr>
+      <tr><td class="k">Feel</td><td>Calm, cinematic deep space; dark, luminous, minimal chrome</td></tr>
+    </table>
+  </div>
+
+  <div style="flex:1">
+    <h2>5 · Technical Snapshot</h2>
+    <table>
+      <tr><td class="k">Stack</td><td>JUCE 8.0.6 · C++17 · CMake + Projucer (Android); no third-party deps</td></tr>
+      <tr><td class="k">Platforms</td><td>Windows 10+ · macOS 10.13+ universal · iOS 15+ · Android 7+, as Standalone / VST3 / AU / AUv3</td></tr>
+      <tr><td class="k">Audio</td><td>Buffered playback; equal-power crossfades on loop, key and preset; <code>juce::Reverb</code> ×3; constant-power pan</td></tr>
+      <tr><td class="k">Content</td><td>Encrypted <code>.ntlib</code> (Blowfish-CTR), RAM only. FLAC 255 MB desktop / Ogg 94 MB mobile, shipped in the app</td></tr>
+      <tr><td class="k">Privacy</td><td>No account, DRM, analytics or telemetry; one version-check call at launch</td></tr>
+      <tr><td class="k">Build</td><td>GitHub Actions → Inno Setup · <code>pkgbuild</code> · APK/AAB</td></tr>
+      <tr><td class="k">Signing</td><td>Android verified, Apple Distribution issued; Windows signing and macOS notarisation <b>outstanding</b></td></tr>
+      <tr><td class="k">Tooling</td><td>In-house <b>Nebula Forge</b> (preset authoring) and <b>NebulaPack</b> (container builder)</td></tr>
+    </table>
+  </div>
+</div>
+
+<h2>6 · Standardization Notes</h2>
+<div class="std">
+  <div class="keep"><b>Keep — product-specific</b>
+    <ul>
+      <li>Space/tide identity &amp; naming</li>
+      <li>Per-preset full-UI retint</li>
+      <li>Key-planet orbit selector</li>
+      <li>Star FX / texture players</li>
+      <li>Audio-reactive starfield</li>
+    </ul>
+  </div>
+  <div class="stand"><b>Standardize across studio</b>
+    <ul>
+      <li>Colour token names &amp; roles</li>
+      <li>Type scale and tracking</li>
+      <li>Knob / slider / button components</li>
+      <li>Settings overlay pattern</li>
+      <li>Right-click MIDI-learn</li>
+      <li>Update-check client + schema</li>
+      <li>Encrypted container &amp; packer</li>
+    </ul>
+  </div>
+  <div class="miss"><b>Missing — company infrastructure</b>
+    <ul>
+      <li>Amanorsac account · licensing</li>
+      <li>Searchable preset browser</li>
+      <li>About screen &amp; visible version</li>
+      <li>Legal / privacy links in-app</li>
+      <li>Accessibility: no screen-reader labels, no reduced-motion</li>
+      <li>Crash reporting · localization</li>
+      <li>In-app help / onboarding</li>
+    </ul>
+  </div>
+</div>
+
+<p class="note"><b>Scope.</b> As built on 2026-09-01. Desktop is released and in use; mobile builds compile but are unpublished and not device-tested. Absent work appears only under Missing. No credentials or secrets are referenced.</p>
