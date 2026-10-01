@@ -1059,14 +1059,26 @@ void NebulaTideProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
     // Program change = preset. CC7 volume · CC10 pan · CC91 reverb mix.
     // Notes on the aux channel drive FX and textures, never the pad, so they
     // must not count toward note gating.
-    auto countsAsKey = [] (const juce::MidiMessage& msg)
+    auto countsAsKey = [this] (const juce::MidiMessage& msg)
     {
+        if (ignoreNotes.load()) return false;
         return msg.getChannel() != auxMidiChannel && zoneOf (msg.getNoteNumber()) == 1;
     };
+
+    const bool noNotes = ignoreNotes.load();
+    const int  listen  = listenChannel.load();
 
     for (const auto meta : midi)
     {
         const auto m = meta.getMessage();
+
+        // Anything from another keyboard is dropped before it can act, be
+        // learned, or gate the pad. The aux channel is exempt: that is the
+        // private route dragged MIDI clips are written to.
+        const int ch = m.getChannel();
+        if (listen > 0 && ch > 0 && ch != listen && ch != auxMidiChannel)
+            continue;
+
         const bool isCC = m.isController();
         const bool isNote = m.isNoteOn();
 
@@ -1171,8 +1183,9 @@ void NebulaTideProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
             continue;
         }
 
-        // unbound notes route by key zone
-        if (! consumed && isNote)
+        // Unbound notes route by key zone - unless the player has said their
+        // keyboard is for playing, not for driving this.
+        if (! consumed && isNote && ! noNotes)
         {
             const int n = m.getNoteNumber();
 
@@ -1402,6 +1415,8 @@ void NebulaTideProcessor::getStateInformation (juce::MemoryBlock& dest)
         binds.add (juce::String (binding[i].load()));
     state.setProperty ("midimap", binds.joinIntoString (","), nullptr);
     state.setProperty ("noteGate", noteGate.load(), nullptr);
+    state.setProperty ("ignoreNotes", ignoreNotes.load(), nullptr);
+    state.setProperty ("listenChannel", listenChannel.load(), nullptr);
     state.setProperty ("showKeyboard", showKeyboard.load(), nullptr);
     state.setProperty ("loopBlend", (double) gLoopBlendSeconds.load(), nullptr);
     for (int c = 0; c < 2; ++c)
@@ -1429,6 +1444,10 @@ void NebulaTideProcessor::setStateInformation (const void* data, int size)
 
     if (state.hasProperty ("noteGate"))
         noteGate.store ((bool) state.getProperty ("noteGate"));
+    if (state.hasProperty ("ignoreNotes"))
+        ignoreNotes.store ((bool) state.getProperty ("ignoreNotes"));
+    if (state.hasProperty ("listenChannel"))
+        listenChannel.store (juce::jlimit (0, 16, (int) state.getProperty ("listenChannel")));
     if (state.hasProperty ("showKeyboard"))
         showKeyboard.store ((bool) state.getProperty ("showKeyboard"));
     if (state.hasProperty ("loopBlend"))

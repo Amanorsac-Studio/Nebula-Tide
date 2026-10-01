@@ -321,6 +321,29 @@ public:
         gateBtn.onClick = [this] { processor.noteGate.store (gateBtn.getToggleState()); };
         addAndMakeVisible (gateBtn);
 
+        // For players whose keyboard is also playing its own sounds: stop the
+        // notes reaching the zones, and pick which channel is listened to.
+        ignoreNotesBtn.setClickingTogglesState (true);
+        ignoreNotesBtn.setToggleState (processor.ignoreNotes.load(), juce::dontSendNotification);
+        ignoreNotesBtn.onClick = [this]
+        {
+            processor.ignoreNotes.store (ignoreNotesBtn.getToggleState());
+        };
+        addAndMakeVisible (ignoreNotesBtn);
+
+        channelLabel.setText ("MIDI CHANNEL", juce::dontSendNotification);
+        channelLabel.setFont (juce::Font (juce::FontOptions (10.0f)).withExtraKerningFactor (0.3f));
+        addAndMakeVisible (channelLabel);
+        channelBox.addItem ("All channels", 1);
+        for (int c = 1; c <= 16; ++c)
+            channelBox.addItem ("Channel " + juce::String (c), c + 1);
+        channelBox.setSelectedId (processor.listenChannel.load() + 1, juce::dontSendNotification);
+        channelBox.onChange = [this]
+        {
+            processor.listenChannel.store (juce::jmax (0, channelBox.getSelectedId() - 1));
+        };
+        addAndMakeVisible (channelBox);
+
         blendLabel.setText ("LOOP BLEND", juce::dontSendNotification);
         blendLabel.setFont (juce::Font (juce::FontOptions (10.0f)).withExtraKerningFactor (0.3f));
         addAndMakeVisible (blendLabel);
@@ -429,6 +452,9 @@ public:
     void chooseLibraryFolder();
     void refreshLibraryPath();
     juce::ToggleButton gateBtn { "MIDI notes gate the pad (note off = fade out, like a sampler)" };
+    juce::ToggleButton ignoreNotesBtn { "IGNORE INCOMING NOTES - play your keyboard without changing keys or firing effects" };
+    juce::Label    channelLabel;   // which MIDI channel Nebula Tide answers on
+    juce::ComboBox channelBox;
     juce::Label blendLabel;        // loop crossfade length (pads, FX, textures)
     juce::Slider blendSlider;
 

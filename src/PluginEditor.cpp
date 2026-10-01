@@ -1108,6 +1108,12 @@ void SettingsPanel::resized()
     if (devicesBtn.isVisible())
         devicesBtn.setBounds (area.removeFromBottom (36).withSizeKeepingCentre (240, 30));
     gateBtn.setBounds (area.removeFromTop (26));
+    ignoreNotesBtn.setBounds (area.removeFromTop (26));
+    {
+        auto chRow = area.removeFromTop (26);
+        channelLabel.setBounds (chRow.removeFromLeft (96));
+        channelBox.setBounds (chRow.removeFromLeft (160).reduced (4, 2));
+    }
     auto blendRow = area.removeFromTop (26);
     blendLabel.setBounds (blendRow.removeFromLeft (96));
     blendSlider.setBounds (blendRow.reduced (4, 2));

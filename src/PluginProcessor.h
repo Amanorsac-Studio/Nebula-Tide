@@ -193,6 +193,22 @@ public:
     std::atomic<bool> noteGate { false };
     std::atomic<bool> showKeyboard { false };   // zoned keyboard strip visible (UI pref, persisted)
 
+    // ── Playing a keyboard that is not meant for us ──────────────────
+    // The note zones below sit in normal playing range, so a player whose
+    // stage piano is feeding Nebula Tide alongside its own sounds keeps
+    // triggering keys and FX just by playing. A customer hit exactly that:
+    // a mapped volume fader worked, but the effects changed under her hands.
+    //
+    //   ignoreNotes   notes stop driving keys, FX and textures altogether.
+    //                 Learned mappings still answer - they were asked for -
+    //                 as does the aux channel, which hosts' MIDI clips use.
+    //   listenChannel 0 listens on every channel; 1..16 listens on that one
+    //                 alone, so one keyboard can own Nebula Tide while the
+    //                 rest of the rig plays on. The aux channel is never
+    //                 filtered out, or dragged MIDI clips would stop working.
+    std::atomic<bool> ignoreNotes { false };
+    std::atomic<int>  listenChannel { 0 };
+
     // ── Key zones (Kontakt-style keyboard layout) ──
     //   FX       C2..B2  (36..47)  one note per FX sound
     //   KEYS     C3..B4  (48..71)  pitch class = musical key
