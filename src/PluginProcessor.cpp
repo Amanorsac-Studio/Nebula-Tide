@@ -378,7 +378,8 @@ const char* NebulaTideProcessor::midiActionName (int action)
         "Key Gb", "Key G", "Key Ab", "Key A", "Key Bb", "Key B",
         "Select Preset 1", "Select Preset 2", "Select Preset 3", "Select Preset 4",
         "Select Preset 5", "Select Preset 6", "Select Preset 7", "Select Preset 8",
-        "Shimmer", "Shimmer Bloom"
+        "Shimmer", "Shimmer Bloom",
+        "FX Volume", "Texture Volume"
     };
     return (action >= 0 && action < numMidiActions) ? names[action] : "";
 }
@@ -1127,7 +1128,16 @@ void NebulaTideProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
         if (target >= 0 && (isCC || isNote))
         {
             const int num = isCC ? m.getControllerNumber() : m.getNoteNumber();
-            binding[target].store (0x200 | (isCC ? 0x100 : 0) | num);
+            const int learned = 0x200 | (isCC ? 0x100 : 0) | num;
+
+            // One controller, one job. Learning a fader that already drove
+            // something else used to leave both bound, so the texture level
+            // and the master volume moved together and looked like a bug.
+            for (int a = 0; a < numMidiActions; ++a)
+                if (a != target && binding[a].load() == learned)
+                    binding[a].store (0);
+
+            binding[target].store (learned);
             learnTarget.store (-1);
             continue;               // consumed by learn
         }
@@ -1155,6 +1165,15 @@ void NebulaTideProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
                                      : m.getFloatVelocity();
                 if (auto* prm = apvts.getParameter (pid))
                     prm->setValueNotifyingHost (v);
+            }
+            // FX and texture level ride a fader like the pad does. They are not
+            // plugin parameters - they belong to the two aux voices - so they
+            // are set straight rather than through the parameter tree.
+            else if (a == 36 || a == 37)
+            {
+                const float v = isCC ? (float) m.getControllerValue() / 127.0f
+                                     : m.getFloatVelocity();
+                setAuxVolume (a - 36, v);
             }
             else                    // command: notes fire directly; CCs on rising edge
             {

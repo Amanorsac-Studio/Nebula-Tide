@@ -424,11 +424,84 @@ public:
         addAndMakeVisible (resetLocationBtn);
         refreshLibraryPath();
 
+        // FX and texture levels. They were only reachable by MIDI before, which
+        // is no use to someone balancing a texture against the pad by ear.
+        smallCaps (fxVolLabel,  "FX LEVEL");
+        smallCaps (texVolLabel, "TEXTURE LEVEL");
+        for (auto* s : { &fxVolSlider, &texVolSlider })
+        {
+            s->setSliderStyle (juce::Slider::LinearHorizontal);
+            s->setRange (0.0, 1.0, 0.01);
+            s->setTextBoxStyle (juce::Slider::TextBoxRight, false, 52, 20);
+            s->setNumDecimalPlacesToDisplay (0);
+            s->textFromValueFunction = [] (double v) { return juce::String (juce::roundToInt (v * 100.0)) + "%"; };
+            s->valueFromTextFunction = [] (const juce::String& t) { return t.getDoubleValue() / 100.0; };
+            addAndMakeVisible (*s);
+        }
+        fxVolSlider.setValue (processor.getAuxVolume (0), juce::dontSendNotification);
+        texVolSlider.setValue (processor.getAuxVolume (1), juce::dontSendNotification);
+        fxVolSlider.onValueChange  = [this] { processor.setAuxVolume (0, (float) fxVolSlider.getValue()); };
+        texVolSlider.onValueChange = [this] { processor.setAuxVolume (1, (float) texVolSlider.getValue()); };
+
         aboutBtn.onClick = [this] { aboutView.setVisible (true); aboutView.toFront (true); };
         addAndMakeVisible (aboutBtn);
         addChildComponent (aboutView);
 
+        setPage (0);
         startTimerHz (10);
+    }
+
+    // ── Pages ────────────────────────────────────────────────────────
+    // Everything used to be one long column, which meant hunting past the
+    // shimmer controls to reach the sound library. Four pages, chosen down the
+    // left, each holding only what belongs together.
+    enum { pageMidi = 0, pageSound, pageLibrary, pageSystem, numPages };
+
+    void setPage (int p)
+    {
+        page = juce::jlimit (0, (int) numPages - 1, p);
+
+        const bool midi = (page == pageMidi), snd = (page == pageSound),
+                   lib  = (page == pageLibrary), sys = (page == pageSystem);
+
+        // Spelled with a fixed parameter type: a braced list of mixed component
+        // kinds cannot be deduced, only converted.
+        auto show = [] (bool visible, std::initializer_list<juce::Component*> cs)
+        {
+            for (auto* c : cs) c->setVisible (visible);
+        };
+
+        show (midi, { &gateBtn, &ignoreNotesBtn, &channelLabel, &channelBox, &viewport });
+
+        show (snd, { &blendLabel, &blendSlider, &shimHeading,
+                     &bloomLabel, &bloomSlider, &toneLabel, &toneSlider,
+                     &sizeLabel, &sizeSlider, &densityLabel, &densitySlider,
+                     &pitchLabel, &pitchBox, &manualBtn,
+                     &fxVolLabel, &fxVolSlider, &texVolLabel, &texVolSlider });
+
+        show (lib, { &soundsHeading, &soundsPath, &locateBtn, &resetLocationBtn });
+
+        show (sys, { &licenseHeading, &licenseStatus, &deactivateBtn, &aboutBtn });
+       #if ! NEBULA_REQUIRE_LICENSE
+        licenseHeading.setVisible (false);
+        licenseStatus.setVisible (false);
+        deactivateBtn.setVisible (false);
+       #endif
+        devicesBtn.setVisible (sys && standaloneDevices);
+        deviceView.setVisible (sys && deviceSelector != nullptr);
+
+        resized();
+        repaint();
+    }
+
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        for (int i = 0; i < numPages; ++i)
+            if (navBounds[i].contains (e.getPosition()))
+            {
+                setPage (i);
+                return;
+            }
     }
 
     juce::TextButton devicesBtn;   // wired by the editor (standalone only)
@@ -473,6 +546,39 @@ public:
     using BtAtt = juce::AudioProcessorValueTreeState::ButtonAttachment;
     std::unique_ptr<BtAtt> manualAtt;
 
+    // Levels for the two aux voices, and MIDI-learnable like everything else
+    // (right-click, or the mapping list under MIDI / INPUT).
+    juce::Label  fxVolLabel, texVolLabel;
+    juce::Slider fxVolSlider, texVolSlider;
+
+    // The editor hides this in a plugin; remembered so page changes do not
+    // bring it back where the host owns the devices.
+    bool standaloneDevices = true;
+
+    // Audio and MIDI device choice, inside the app rather than in the stock
+    // pop-up window it used to open. Standalone only: in a plugin the host
+    // owns the devices and there is nothing to choose.
+    void setDeviceManager (juce::AudioDeviceManager& dm)
+    {
+        deviceSelector = std::make_unique<juce::AudioDeviceSelectorComponent> (
+            dm, 0, 0,          // no audio input: this is an instrument
+            1, 2,              // mono or stereo out
+            true,              // MIDI inputs, with their enable switches
+            false,             // no MIDI output
+            true,              // outputs as stereo pairs
+            false);            // advanced options always shown
+        deviceSelector->setItemHeight (24);
+        deviceView.setViewedComponent (deviceSelector.get(), false);
+        deviceView.setScrollBarsShown (true, false);
+        deviceView.setScrollBarThickness (8);
+        addChildComponent (deviceView);
+        devicesBtn.setVisible (false);   // the pop-up has nothing left to offer
+        standaloneDevices = false;
+        setPage (page);
+    }
+    std::unique_ptr<juce::AudioDeviceSelectorComponent> deviceSelector;
+    juce::Viewport deviceView;
+
     void paint (juce::Graphics&) override;
     void resized() override;
     void visibilityChanged() override { if (! isVisible()) processor.cancelLearn(); }
@@ -485,6 +591,9 @@ private:
     juce::OwnedArray<Row> rows;
     juce::Viewport viewport;
     juce::Component rowsHolder;
+
+    int page = 0;
+    juce::Rectangle<int> navBounds[numPages], cardBounds, footerBounds;   // filled in resized()
 };
 
 //==============================================================================

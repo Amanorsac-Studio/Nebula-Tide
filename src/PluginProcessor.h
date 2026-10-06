@@ -253,8 +253,9 @@ public:
     // ── MIDI mapping + learn ─────────────────────────────────────────
     // Actions 0-5 are continuous (parameters), 6-12 are core commands,
     // 13 = pad play/stop, 14-25 = keys C..B, 26-33 = select preset 1..8,
-    // 34-35 = shimmer (v2). New actions are appended so saved v1 maps still load.
-    enum { numMidiActions = 36 };
+    // 34-35 = shimmer (v2), 36-37 = FX and texture volume. New actions are
+    // appended so saved v1 maps still load.
+    enum { numMidiActions = 38 };
     static const char* midiActionName (int action);
     juce::String bindingText (int action) const;   // "CC 7", "Note C1", "—"
     void startLearn (int action)   { learnTarget.store (action); }
