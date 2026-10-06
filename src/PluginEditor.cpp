@@ -4,9 +4,11 @@
 
 namespace colours
 {
-    const juce::Colour bgDeep     { 0xff020c16 };
-    const juce::Colour foam       { 0xffbdf3ff };
-    const juce::Colour textDim    { 0xff6fa8bd };
+    // extern, because a namespace-scope const is internal by default and
+    // PresetStudio.cpp needs to link against these same objects.
+    extern const juce::Colour bgDeep  { 0xff020c16 };
+    extern const juce::Colour foam    { 0xffbdf3ff };
+    extern const juce::Colour textDim { 0xff6fa8bd };
 
     // theme accents — retinted live to the current preset's colour
     juce::Colour bgMid      { 0xff04283f };
@@ -525,8 +527,14 @@ NebulaTideEditor::NebulaTideEditor (NebulaTideProcessor& p)
         if (updatePageUrl.isNotEmpty()) juce::URL (updatePageUrl).launchInDefaultBrowser();
     };
     addChildComponent (updateBtn);
+   #if ! (JUCE_IOS || JUCE_ANDROID)
+    // Desktop only. Store builds are updated by the store, and an in-app
+    // button sending a phone user to a website for a new version is exactly
+    // what App Review turns down.
     checkForUpdate();
+   #endif
 
+    showMainViewIfLicensed();
     keysBtn.setColour (juce::TextButton::textColourOffId, colours::textDim);
     keysBtn.onClick = [this]
     {
@@ -588,6 +596,7 @@ NebulaTideEditor::NebulaTideEditor (NebulaTideProcessor& p)
 
     setupKnob (volumeKnob, volumeLabel, "VOLUME", "volume");
     setupKnob (panKnob, panLabel, "PAN", "pan");
+    setupKnob (shimSlider, shimLabel, "SHIMMER", "shim");
     setupSlider (fadeSlider, fadeLabel, "CROSSFADE");
     setupSlider (rMixSlider, rMixLabel, "MIX");
     setupSlider (rSizeSlider, rSizeLabel, "SIZE");
@@ -608,10 +617,28 @@ NebulaTideEditor::NebulaTideEditor (NebulaTideProcessor& p)
     rMixAtt   = std::make_unique<Attachment> (processor.apvts, "rmix", rMixSlider);
     rSizeAtt  = std::make_unique<Attachment> (processor.apvts, "rsize", rSizeSlider);
     rDampAtt  = std::make_unique<Attachment> (processor.apvts, "rdamp", rDampSlider);
+    shimAtt   = std::make_unique<Attachment> (processor.apvts, "shim", shimSlider);
+
+    // Dragging a clip only makes sense where there is a timeline to drop it on.
+    addChildComponent (midiDrag);
+    midiDrag.setVisible (! juce::JUCEApplicationBase::isStandaloneApp());
 
     settingsBtn.setColour (juce::TextButton::textColourOffId, colours::textDim);
     settingsBtn.onClick = [this] { settingsPanel.setVisible (! settingsPanel.isVisible()); };
     addAndMakeVisible (settingsBtn);
+
+    // Forge, brought inside the app. Rebuilding the pad list afterwards is
+    // what makes a newly saved preset appear without a restart.
+    studio = std::make_unique<PresetStudio> (processor, [this]
+    {
+        rebuildPads();
+        resized();
+    });
+    addChildComponent (*studio);
+    studio->setVisible (false);      // opens only from the STUDIO button
+    studioBtn.setColour (juce::TextButton::textColourOffId, colours::textDim);
+    studioBtn.onClick = [this] { studio->setVisible (! studio->isVisible()); };
+    addAndMakeVisible (studioBtn);
     addChildComponent (settingsPanel);   // hidden until toggled
 
     // one settings entry point: fold the standalone's stock "Options" button
@@ -623,6 +650,10 @@ NebulaTideEditor::NebulaTideEditor (NebulaTideProcessor& p)
             if (auto* holder = juce::StandalonePluginHolder::getInstance())
                 holder->showAudioSettingsDialog();
         };
+        // Devices live on the SYSTEM page now; the button above is only a
+        // fallback for a holder that somehow has no device manager.
+        if (auto* holder = juce::StandalonePluginHolder::getInstance())
+            settingsPanel.setDeviceManager (holder->deviceManager);
         juce::MessageManager::callAsync ([safeThis = juce::Component::SafePointer<NebulaTideEditor> (this)]
         {
             if (safeThis == nullptr) return;
@@ -635,7 +666,8 @@ NebulaTideEditor::NebulaTideEditor (NebulaTideProcessor& p)
     }
     else
     {
-        settingsPanel.devicesBtn.setVisible (false);   // hosts own the devices
+        settingsPanel.standaloneDevices = false;        // hosts own the devices
+        settingsPanel.devicesBtn.setVisible (false);
     }
 
     // right-click MIDI learn on the controls themselves
@@ -650,11 +682,34 @@ NebulaTideEditor::NebulaTideEditor (NebulaTideProcessor& p)
     attachLearn (rMixSlider, 2);
     attachLearn (rSizeSlider, 3);
     attachLearn (rDampSlider, 4);
+    attachLearn (shimSlider, 34);
     attachLearn (fadeSlider, 5);
-    attachLearn (fxStar, 6);
-    attachLearn (texStar, 7);
+    // A star answers for two things: its play/stop toggle and its level, so a
+    // right-click offers both rather than sending people to Settings for one.
+    auto attachLearnMany = [this] (juce::Component& c, juce::Array<int> actions)
+    {
+        auto* l = learnListeners.add (new MidiLearnListener (processor,
+            [actions] { return actions; }));
+        c.addMouseListener (l, true);
+    };
+    attachLearnMany (fxStar,  { 6, 36 });
+    attachLearnMany (texStar, { 7, 37 });
     attachLearn (nextBtn, 9);      // next preset
     attachLearn (prevBtn, 10);     // previous preset
+    attachLearn (settingsPanel.fxVolSlider, 36);
+    attachLearn (settingsPanel.texVolSlider, 37);
+
+    // Nothing of the instrument is reachable until a proof has verified.
+    // Built at construction, so the gate is up before the first paint.
+   #if NEBULA_REQUIRE_LICENSE
+    if (! processor.license.isLicensed())
+    {
+        activation = std::make_unique<ActivationView> (processor.license,
+                                                       [this] { showMainViewIfLicensed(); });
+        addAndMakeVisible (*activation);
+        activation->toFront (true);
+    }
+   #endif
 
     rebuildPads();
 
@@ -677,7 +732,14 @@ NebulaTideEditor::NebulaTideEditor (NebulaTideProcessor& p)
 
     setWantsKeyboardFocus (true);   // piano-key control: A W S E D F T G Y H U J
     setResizable (true, true);
+   #if JUCE_IOS || JUCE_ANDROID
+    // A phone in landscape is about 430 points tall. The desktop minimum of
+    // 660 below stopped the editor shrinking to fit, so the bottom third of
+    // the interface - keys, reverb, volume and pan - hung off the screen.
+    setResizeLimits (320, 320, 4096, 4096);
+   #else
     setResizeLimits (900, 660, 1920, 1200);
+   #endif
     setSize (1100, 780);
     startTimerHz (60);
 }
@@ -997,44 +1059,261 @@ void SettingsPanel::paint (juce::Graphics& g)
     g.setFont (ui::titleFont (15.0f));
     g.drawText ("S E T T I N G S", getLocalBounds().removeFromTop (44), juce::Justification::centred);
 
-    auto info = getLocalBounds().reduced (26, 0).removeFromTop (118).withTrimmedTop (46);
-    g.setFont (juce::Font (juce::FontOptions (11.5f)));
+    // ── the page list down the left ──
+    static const char* const navTitle[] = { "MIDI / INPUT", "SOUND SHAPING", "LIBRARY", "SYSTEM" };
+    static const char* const navSub[]   = { "Control & playback", "Pad & texture",
+                                            "Sounds & content", "Devices & misc" };
+
+    for (int i = 0; i < numPages; ++i)
+    {
+        const auto r = navBounds[i].toFloat();
+        const bool on = (i == page);
+
+        g.setColour (on ? colours::sea.withAlpha (0.22f) : juce::Colour (0xff04182a).withAlpha (0.55f));
+        g.fillRoundedRectangle (r, 8.0f);
+        g.setColour (on ? colours::seaBright.withAlpha (0.55f) : colours::seaBright.withAlpha (0.12f));
+        g.drawRoundedRectangle (r.reduced (0.5f), 8.0f, 1.0f);
+
+        // A lit bar on the chosen one, so the eye finds the page it is on
+        // without reading the labels.
+        if (on)
+        {
+            g.setColour (colours::seaBright.withAlpha (0.85f));
+            g.fillRoundedRectangle (r.getX() + 1.0f, r.getY() + 8.0f, 3.0f, r.getHeight() - 16.0f, 1.5f);
+        }
+
+        auto text = navBounds[i].reduced (16, 8);
+        g.setColour (on ? colours::foam : colours::textDim.brighter (0.2f));
+        g.setFont (ui::labelFont (11.5f));
+        g.drawText (navTitle[i], text.removeFromTop (16), juce::Justification::centredLeft);
+        g.setColour (colours::textDim);
+        g.setFont (ui::bodyFont (10.5f));
+        g.drawText (navSub[i], text, juce::Justification::topLeft);
+    }
+
+    // ── the card the page sits on ──
+    static const char* const cardCaption[] = { "CONTROL & PLAYBACK", "TEXTURE & EVOLUTION",
+                                               "SOUND LIBRARY", "DEVICE & ABOUT" };
+    const auto card = cardBounds.toFloat();
+    g.setColour (juce::Colour (0xff04182a).withAlpha (0.5f));
+    g.fillRoundedRectangle (card, 10.0f);
+    g.setColour (colours::seaBright.withAlpha (0.16f));
+    g.drawRoundedRectangle (card.reduced (0.5f), 10.0f, 1.0f);
+
+    auto head = cardBounds.withHeight (38).reduced (16, 0);
+    g.setColour (colours::foam);
+    g.setFont (ui::labelFont (12.5f));
+    g.drawText (navTitle[page], head, juce::Justification::centredLeft);
     g.setColour (colours::textDim);
-    g.drawFittedText (
-        "MIDI ZONES  -  FX C2-B2 (one note per sound)  |  KEYS C3-B4 (pitch = key)  |  TEXTURES C5-B5 (one note per sound)\n"
-        "KEYBOARD  -  A W S E D F T G Y H U J = C..B   |   SPACE play/stop   |   \x3c \x3e presets   |   1 FX   |   2 texture\n"
-        "MIDI LEARN  -  click LEARN, then move a knob or press a pad on your controller.",
-        info, juce::Justification::topLeft, 4);
+    g.setFont (ui::bodyFont (10.0f));
+    g.drawText (cardCaption[page], head, juce::Justification::centredRight);
+    g.setColour (colours::seaBright.withAlpha (0.12f));
+    g.drawHorizontalLine (head.getBottom(), (float) cardBounds.getX() + 10.0f,
+                          (float) cardBounds.getRight() - 10.0f);
+
+    // The zone and keyboard reference belongs with the MIDI page, not over
+    // every page as it used to be.
+    if (page == pageMidi)
+    {
+        g.setFont (juce::Font (juce::FontOptions (10.5f)));
+        g.setColour (colours::textDim);
+        g.drawFittedText (
+            "ZONES  FX C2-B2  |  KEYS C3-B4 (pitch = key)  |  TEXTURES C5-B5        "
+            "KEYS  A W S E D F T G Y H U J = C..B   SPACE play/stop",
+            footerBounds, juce::Justification::centredLeft, 2);
+    }
+}
+
+void SettingsPanel::refreshLibraryPath()
+{
+    const auto lib = NebulaTideProcessor::currentLibraryFile();
+    const auto pick = NebulaTideProcessor::userChosenLibraryDir();
+
+    if (lib != juce::File())
+        soundsPath.setText (lib.getFullPathName()
+                              + (pick != juce::File() ? "   (chosen)" : "   (default)"),
+                            juce::dontSendNotification);
+    else
+        soundsPath.setText ("No sound library found - choose the folder containing NebulaTide.ntlib",
+                            juce::dontSendNotification);
+
+    soundsPath.setColour (juce::Label::textColourId,
+                          lib != juce::File() ? colours::textDim : juce::Colour (0xffff5a6e));
+    resetLocationBtn.setEnabled (pick != juce::File());
+}
+
+void SettingsPanel::chooseLibraryFolder()
+{
+    folderChooser = std::make_unique<juce::FileChooser> (
+        "Where is your Nebula Tide sound library?",
+        NebulaTideProcessor::defaultLibraryDir(), juce::String());
+
+    folderChooser->launchAsync (juce::FileBrowserComponent::openMode
+                                  | juce::FileBrowserComponent::canSelectDirectories,
+        [this] (const juce::FileChooser& fc)
+        {
+            const auto dir = fc.getResult();
+            if (! dir.isDirectory()) return;
+
+            // Say so plainly rather than accepting a folder and failing later
+            // with the same blank screen this setting exists to cure.
+            if (dir.findChildFiles (juce::File::findFiles, false, "*.ntlib").isEmpty())
+            {
+                soundsPath.setText ("No .ntlib file in " + dir.getFullPathName(),
+                                    juce::dontSendNotification);
+                soundsPath.setColour (juce::Label::textColourId, juce::Colour (0xffff5a6e));
+                return;
+            }
+
+            NebulaTideProcessor::setUserChosenLibraryDir (dir);
+            processor.reloadLibrary();
+            refreshLibraryPath();
+        });
 }
 
 void SettingsPanel::resized()
 {
-    auto area = getLocalBounds().reduced (26, 12);
-    area.removeFromTop (124);
-    if (devicesBtn.isVisible())
-        devicesBtn.setBounds (area.removeFromBottom (36).withSizeKeepingCentre (240, 30));
-    gateBtn.setBounds (area.removeFromTop (26));
-    auto blendRow = area.removeFromTop (26);
-    blendLabel.setBounds (blendRow.removeFromLeft (96));
-    blendSlider.setBounds (blendRow.reduced (4, 2));
-    area.removeFromTop (4);
+    aboutView.setBounds (getLocalBounds().reduced (18, 14));
 
-    viewport.setBounds (area);
-    const int rowH = 28;
-    rowsHolder.setSize (area.getWidth() - 12, rows.size() * rowH);
-    auto inner = rowsHolder.getLocalBounds();
-    for (auto* row : rows)
+    auto body = getLocalBounds().reduced (22, 14);
+    body.removeFromTop (34);                       // under the SETTINGS title
+
+    // Left: the page list. Narrow screens drop it to a strip of titles.
+    const bool narrow = getWidth() < 760;
+    auto nav = body.removeFromLeft (narrow ? 132 : 208);
+    body.removeFromLeft (14);
+    for (int i = 0; i < numPages; ++i)
     {
-        auto r = inner.removeFromTop (rowH);
-        row->clear.setBounds (r.removeFromRight (30).reduced (2));
-        row->learn.setBounds (r.removeFromRight (74).reduced (2));
-        row->bind.setBounds (r.removeFromRight (110));
-        row->name.setBounds (r);
+        navBounds[i] = nav.removeFromTop (narrow ? 40 : 54);
+        nav.removeFromTop (8);
+    }
+
+    cardBounds = body;
+    auto area = body.reduced (16, 0);
+    area.removeFromTop (46);                       // card header
+    footerBounds = {};
+
+    auto labelledRow = [&area] (juce::Label& l, juce::Component& c, int h = 24)
+    {
+        auto r = area.removeFromTop (h);
+        l.setBounds (r.removeFromLeft (104));
+        c.setBounds (r.reduced (4, 2));
+    };
+
+    switch (page)
+    {
+        case pageMidi:
+        {
+            gateBtn.setBounds (area.removeFromTop (26));
+            ignoreNotesBtn.setBounds (area.removeFromTop (26));
+            area.removeFromTop (2);
+            {
+                auto chRow = area.removeFromTop (26);
+                channelLabel.setBounds (chRow.removeFromLeft (104));
+                channelBox.setBounds (chRow.removeFromLeft (170).reduced (4, 2));
+            }
+            area.removeFromTop (8);
+            footerBounds = area.removeFromBottom (28);
+
+            viewport.setBounds (area);
+            const int rowH = 28;
+            rowsHolder.setSize (area.getWidth() - 12, rows.size() * rowH);
+            auto inner = rowsHolder.getLocalBounds();
+
+            // Action numbers are fixed so saved maps keep working, but the list
+            // reads in a sensible order: the three levels together at the top,
+            // not two of them exiled to the bottom because they came later.
+            juce::Array<int> order { 0, 36, 37 };
+            for (int i = 1; i < rows.size(); ++i)
+                if (i != 36 && i != 37) order.add (i);
+
+            for (const int i : order)
+            {
+                auto* row = rows[i];
+                auto r = inner.removeFromTop (rowH);
+                row->clear.setBounds (r.removeFromRight (30).reduced (2));
+                row->learn.setBounds (r.removeFromRight (74).reduced (2));
+                row->bind.setBounds (r.removeFromRight (110));
+                row->name.setBounds (r);
+            }
+            break;
+        }
+
+        case pageSound:
+        {
+            labelledRow (blendLabel, blendSlider, 26);
+            area.removeFromTop (8);
+            shimHeading.setBounds (area.removeFromTop (18));
+            labelledRow (bloomLabel,   bloomSlider);
+            labelledRow (toneLabel,    toneSlider);
+            labelledRow (sizeLabel,    sizeSlider);
+            labelledRow (densityLabel, densitySlider);
+            labelledRow (pitchLabel,   pitchBox);
+            manualBtn.setBounds (area.removeFromTop (26));
+            area.removeFromTop (10);
+            // The two aux voices sit below the pad's own shaping, since they
+            // are balanced against it rather than part of it.
+            labelledRow (fxVolLabel,  fxVolSlider,  26);
+            labelledRow (texVolLabel, texVolSlider, 26);
+            break;
+        }
+
+        case pageLibrary:
+        {
+            soundsHeading.setBounds (area.removeFromTop (18));
+            soundsPath.setBounds (area.removeFromTop (34));
+            area.removeFromTop (6);
+            auto r = area.removeFromTop (30);
+            locateBtn.setBounds (r.removeFromLeft (160).reduced (0, 2));
+            r.removeFromLeft (10);
+            resetLocationBtn.setBounds (r.removeFromLeft (130).reduced (0, 2));
+            break;
+        }
+
+        case pageSystem: default:
+        {
+           #if NEBULA_REQUIRE_LICENSE
+            licenseHeading.setBounds (area.removeFromTop (18));
+            licenseStatus.setBounds (area.removeFromTop (22));
+            deactivateBtn.setBounds (area.removeFromTop (30).removeFromLeft (230).reduced (0, 2));
+            area.removeFromTop (12);
+           #endif
+            auto r = area.removeFromTop (30);
+            if (standaloneDevices)
+            {
+                devicesBtn.setBounds (r.removeFromLeft (230).reduced (0, 2));
+                r.removeFromLeft (10);
+            }
+            aboutBtn.setBounds (r.removeFromLeft (110).reduced (0, 2));
+
+            // The device panel takes whatever is left, scrolling if the list
+            // of interfaces and MIDI ports outgrows it.
+            if (deviceSelector != nullptr)
+            {
+                area.removeFromTop (12);
+                deviceView.setBounds (area);
+                deviceSelector->setSize (area.getWidth() - 12,
+                                         juce::jmax (area.getHeight(), deviceSelector->getHeight()));
+            }
+            break;
+        }
     }
 }
 
 void SettingsPanel::timerCallback()
 {
+    // A fader on a controller moves these too, so the sliders follow rather
+    // than fight it.
+    if (! fxVolSlider.isMouseButtonDown())
+        fxVolSlider.setValue (processor.getAuxVolume (0), juce::dontSendNotification);
+    if (! texVolSlider.isMouseButtonDown())
+        texVolSlider.setValue (processor.getAuxVolume (1), juce::dontSendNotification);
+
+    licenseStatus.setText (processor.license.isLicensed()
+                             ? "Licensed on this device."
+                             : "Not activated.", juce::dontSendNotification);
+    deactivateBtn.setEnabled (processor.license.isLicensed());
+
     const int learning = processor.learningAction();
     for (int i = 0; i < rows.size(); ++i)
     {
@@ -1134,6 +1413,17 @@ bool NebulaTideEditor::keyPressed (const juce::KeyPress& k)
 
 void NebulaTideEditor::timerCallback()
 {
+   #if JUCE_IOS || JUCE_ANDROID
+    // Turning the phone round moves the Dynamic Island to the other edge
+    // without changing the window's size, so resized() is never called for it.
+    if (auto* display = juce::Desktop::getInstance().getDisplays().getDisplayForRect (getScreenBounds()))
+        if (display->safeAreaInsets != appliedSafeArea)
+        {
+            appliedSafeArea = display->safeAreaInsets;
+            resized();
+        }
+   #endif
+
     if (betaExpired())
     {
         // curtain down: silence and disable everything, repaint the notice
@@ -1148,6 +1438,14 @@ void NebulaTideEditor::timerCallback()
     updateReverbButtons();
     keysBtn.setColour (juce::TextButton::textColourOffId,
                        zoneKeyboard.isVisible() ? colours::seaBright : colours::textDim);
+
+    if (midiDrag.isVisible())
+    {
+        const auto& presets = processor.getPresets();
+        const int pad = juce::jlimit (0, juce::jmax (0, presets.size() - 1), viewIndex);
+        if (! presets.isEmpty())
+            midiDrag.setLabel (presets.getReference (pad).name);
+    }
 }
 
 void NebulaTideEditor::paint (juce::Graphics& g)
@@ -1190,47 +1488,105 @@ void NebulaTideEditor::paint (juce::Graphics& g)
     }
 }
 
+// Called both when a cached proof loads at startup and when someone types a
+// key - the same path, so activation can never leave them at the gate (A3).
+void NebulaTideEditor::showMainViewIfLicensed()
+{
+    if (! processor.license.isLicensed() || activation == nullptr)
+        return;
+    activation.reset();
+    resized();
+    repaint();
+}
+
+juce::Rectangle<int> NebulaTideEditor::contentBounds() const
+{
+    auto r = getLocalBounds();
+   #if JUCE_IOS || JUCE_ANDROID
+    if (auto* display = juce::Desktop::getInstance().getDisplays().getDisplayForRect (getScreenBounds()))
+        r = display->safeAreaInsets.subtractedFrom (r);
+   #endif
+    return r;
+}
+
 void NebulaTideEditor::resized()
 {
     background.setBounds (getLocalBounds());
-    auto area = getLocalBounds();
+    if (activation != nullptr)
+    {
+        activation->setBounds (getLocalBounds());
+        activation->toFront (false);
+    }
+    // Controls stay clear of the Dynamic Island and home indicator; the
+    // background above is still laid edge to edge.
+    const auto safe = contentBounds();
+    auto area = safe;
+
+    // Short screens - a phone in landscape - get tighter rows. Only the space
+    // between things shrinks; the text keeps its size, so nothing becomes
+    // unreadable the way it would if the whole desktop layout were scaled.
+    const bool compact = safe.getHeight() < 600;
 
     // header
-    auto header = area.removeFromTop (64).reduced (26, 10);
-    title.setBounds (header.removeFromLeft (280));
+    auto header = area.removeFromTop (compact ? 46 : 64).reduced (26, compact ? 6 : 10);
+    // On a phone the header is the tightest row: the wide-tracked title and
+    // the status word between them left the preset selector no room at all,
+    // squeezing its arrow to a sliver and pushing the preset name out. The
+    // title steps down a size, the status word (decoration) goes, and the
+    // buttons narrow, so the width lands on the thing people actually use.
+    title.setFont (ui::titleFont (compact ? 15.0f : 19.0f));
+    title.setBounds (header.removeFromLeft (compact ? 200 : 280));
     settingsBtn.setBounds (header.removeFromRight (86));
     header.removeFromRight (6);
-    keysBtn.setBounds (header.removeFromRight (62));
+    keysBtn.setBounds (header.removeFromRight (compact ? 54 : 62));
+    header.removeFromRight (6);
+    studioBtn.setBounds (header.removeFromRight (compact ? 64 : 74));
+    if (midiDrag.isVisible())
+    {
+        header.removeFromRight (6);
+        midiDrag.setBounds (header.removeFromRight (96).withSizeKeepingCentre (96, 26));
+    }
     if (updateBtn.isVisible())
     {
         header.removeFromRight (6);
         updateBtn.setBounds (header.removeFromRight (130));
     }
-    statusLabel.setBounds (header.removeFromRight (130));
+    statusLabel.setVisible (! compact);
+    if (! compact)
+        statusLabel.setBounds (header.removeFromRight (130));
 
-    settingsPanel.setBounds (getLocalBounds().withSizeKeepingCentre (
-        juce::jmin (620, getWidth() - 80), juce::jmin (620, getHeight() - 100)));
+    settingsPanel.setBounds (safe.withSizeKeepingCentre (
+        juce::jmin (620, safe.getWidth() - 80), juce::jmin (620, safe.getHeight() - 100)));
     settingsPanel.toFront (false);
+    if (studio != nullptr)
+    {
+        studio->setBounds (safe.withSizeKeepingCentre (
+            juce::jmin (940, safe.getWidth() - 40), juce::jmin (660, safe.getHeight() - 40)));
+        studio->toFront (false);
+    }
     if (downloader != nullptr)
     {
         downloader->setBounds (getLocalBounds());
         downloader->toFront (false);
     }
-    auto nav = header.withSizeKeepingCentre (juce::jmin (440, header.getWidth()), 36);
+    const auto navRoom = compact ? header.reduced (10, 0) : header;
+    auto nav = navRoom.withSizeKeepingCentre (juce::jmin (440, navRoom.getWidth()), 36);
     prevBtn.setBounds (nav.removeFromLeft (40));
     nextBtn.setBounds (nav.removeFromRight (40));
     presetLabel.setBounds (nav);
 
     // footer
-    auto footer = area.removeFromBottom (170).reduced (40, 20);
+    auto footer = compact ? area.removeFromBottom (112).reduced (28, 8)
+                          : area.removeFromBottom (170).reduced (40, 20);
+    const int knob = compact ? 76 : 116;
 
-    auto volArea = footer.removeFromLeft (150);
+    auto volArea = footer.removeFromLeft (compact ? 110 : 150);
     volumeLabel.setBounds (volArea.removeFromBottom (16));
-    volumeKnob.setBounds (volArea.withSizeKeepingCentre (116, 116));
+    volumeKnob.setBounds (volArea.withSizeKeepingCentre (knob, knob));
 
-    auto panArea = footer.removeFromRight (150);
+    auto panArea = footer.removeFromRight (compact ? 110 : 150);
     panLabel.setBounds (panArea.removeFromBottom (16));
-    panKnob.setBounds (panArea.withSizeKeepingCentre (116, 116));
+    panKnob.setBounds (panArea.withSizeKeepingCentre (knob, knob));
 
     // middle: reverb block (left) + crossfade (right)
     auto middle = footer.reduced (24, 0);
@@ -1243,9 +1599,10 @@ void NebulaTideEditor::resized()
     plateBtn.setBounds (typeRow.removeFromLeft (bw).reduced (4, 0));
     hallBtn.setBounds (typeRow.reduced (4, 0));
 
+    int rowsLeft = 3;      // MIX · SIZE · DAMP
     auto sliderRow = [&] (juce::Slider& s, juce::Label& l)
     {
-        auto r = reverbArea.removeFromTop (juce::jmax (20, reverbArea.getHeight() / 3));
+        auto r = reverbArea.removeFromTop (juce::jmax (18, reverbArea.getHeight() / rowsLeft--));
         l.setBounds (r.removeFromLeft (44));
         s.setBounds (r);
     };
@@ -1261,13 +1618,27 @@ void NebulaTideEditor::resized()
     // Kontakt-style zoned keyboard strip (when shown), then the key planets ribbon
     if (zoneKeyboard.isVisible())
         zoneKeyboard.setBounds (area.removeFromBottom (74).reduced (30, 0).withTrimmedBottom (6));
-    keyPlanets.setBounds (area.removeFromBottom (zoneKeyboard.isVisible() ? 100 : 110).reduced (30, 0));
+    // SHIMMER sits beside the keys as a single macro knob — one sweep takes
+    // the whole effect from silent to cascading, so it wants presence rather
+    // than a slider buried among the reverb trims.
+    {
+        const int keyRowH = compact ? 74 : (zoneKeyboard.isVisible() ? 100 : 110);
+        auto keyRow = area.removeFromBottom (keyRowH).reduced (30, 0);
+        auto shimArea = keyRow.removeFromRight (compact ? 80 : 112);
+        shimLabel.setBounds (shimArea.removeFromBottom (16));
+        const int shimKnob = compact ? 56 : 86;
+        shimSlider.setBounds (shimArea.withSizeKeepingCentre (shimKnob, shimKnob));
+        keyPlanets.setBounds (keyRow);
+    }
 
     // FX star (left) and texture star (right) flank the pad grid, sitting
     // slightly above centre
     const int starW = juce::jmin (120, area.getWidth() / 7);
-    const int starH = 150;
-    const int starY = area.getY() + area.getHeight() / 4 - starH / 2;
+    const int starH = compact ? 118 : 150;
+    // On a short screen the quarter-height rule lifted the stars into the
+    // header, so they sit centred in whatever room is left instead.
+    const int starY = compact ? area.getY() + (area.getHeight() - starH) / 2
+                              : area.getY() + area.getHeight() / 4 - starH / 2;
     fxStar.setBounds (area.getX() + 22, starY, starW, starH);
     texStar.setBounds (area.getRight() - starW - 22, starY, starW, starH);
 
@@ -1282,4 +1653,37 @@ void NebulaTideEditor::resized()
         for (auto* pad : pads)
             pad->setBounds (centre);
     }
+}
+
+//==============================================================================
+// The drag handle: a quiet glass chip carrying the preset's own name. Nothing
+// labels it as MIDI and nothing points at it — it is meant to be found rather
+// than advertised, so it never competes with the controls you use constantly.
+void MidiDragHandle::paint (juce::Graphics& g)
+{
+    auto r = getLocalBounds().toFloat().reduced (1.0f);
+    const auto tint = armed ? colours::seaBright : colours::textDim;
+
+    if (armed)
+        ui::drawBloom (g, r.getCentre(), r.getWidth() * 0.6f, colours::seaBright, 0.45f);
+
+    g.setColour (colours::bgMid.withAlpha (armed ? 0.8f : 0.42f));
+    g.fillRoundedRectangle (r, 6.0f);
+    g.setColour (tint.withAlpha (armed ? 0.85f : 0.30f));
+    g.drawRoundedRectangle (r, 6.0f, 1.0f);
+
+    // a small grab texture on each side, so it reads as draggable without a word
+    auto grip = [&g, &r, tint] (float x)
+    {
+        for (int i = 0; i < 3; ++i)
+            g.fillRect (x, r.getCentreY() - 4.0f + (float) i * 4.0f, 7.0f, 1.0f);
+        juce::ignoreUnused (tint);
+    };
+    g.setColour (tint.withAlpha (armed ? 0.7f : 0.35f));
+    grip (r.getX() + 8.0f);
+    grip (r.getRight() - 15.0f);
+
+    g.setColour (tint.withAlpha (armed ? 1.0f : 0.8f));
+    g.setFont (ui::labelFont (10.0f));
+    g.drawText (label.toUpperCase(), r.reduced (20.0f, 0.0f), juce::Justification::centred, true);
 }

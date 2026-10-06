@@ -80,6 +80,14 @@ select {
 .slot.drag { border-color:var(--bright); background:#07283c; }
 .slot .k { font-size:13px; letter-spacing:2px; color:var(--bright); margin-bottom:6px; display:flex; justify-content:space-between; }
 .slot .k .del { color:var(--dim); cursor:pointer; font-size:11px; }
+.slot .chords { margin-top:8px; font-size:10px; color:var(--dim); line-height:1.5; }
+.slot .chords b { color:var(--bright); font-weight:600; }
+.slot .chords .more { cursor:pointer; margin-left:6px; color:var(--bright); user-select:none; }
+.slot .chords .clist { display:none; margin-top:6px; padding-top:6px; border-top:1px solid var(--line);
+                       max-height:120px; overflow-y:auto; color:#8fb6c8; }
+.slot .chords.open .clist { display:block; }
+.slot .chords.open .chint { display:none; }
+.slot .chords .chint { margin-top:3px; color:#5d8496; }
 .slot .k .del:hover { color:#ff7b7b; }
 .slot canvas { width:100%; height:44px; display:block; border-radius:6px; background:#020c16; }
 .slot .hint { font-size:10px; color:var(--dim); text-align:center; padding:14px 4px; letter-spacing:1px; }
@@ -161,6 +169,7 @@ select {
   </div>
 </div>
 
+<script src="/chord-data.js"></script>
 <script>
 const KEYS = ['C','Db','D','Eb','E','F','Gb','G','Ab','A','Bb','B'];
 let presets = [], selected = null;
@@ -277,6 +286,29 @@ function buildSlot(p, key) {
   const file = p.files?.[key];
   d.className = 'slot' + (file ? ' filled' : '');
   d.innerHTML = `<div class="k"><span>${key}</span>${file?'<span class="del" title="slot will be replaced when you drop a new file">'+file+'</span>':''}</div>`;
+
+  // What this pad has to cover. Each pad is a sus2 voicing (root, 2nd, 5th)
+  // with no third, so the same recording serves the major AND minor chord on
+  // that root, plus most extensions — and it is borrowed by a handful of
+  // altered chords rooted elsewhere. Worth knowing before choosing the sound.
+  if (window.NEBULA_CHORDS) {
+    const info = window.NEBULA_CHORDS.byPad[key];
+    const own  = window.NEBULA_CHORDS.ownRoot[key] || [];
+    if (info) {
+      const chords = document.createElement('div');
+      chords.className = 'chords';
+      chords.innerHTML =
+        `<b>${info.count}</b> chords use this pad` +
+        `<span class="more" title="show every chord this pad plays under">▾</span>` +
+        `<div class="clist">${info.chords.join('&nbsp;· ')}</div>` +
+        `<div class="chint">${own.slice(0, 8).join('&nbsp;· ')}&nbsp;…</div>`;
+      chords.querySelector('.more').onclick = e => {
+        e.stopPropagation();
+        chords.classList.toggle('open');
+      };
+      d.appendChild(chords);
+    }
+  }
 
   if (file) {
     const cv = document.createElement('canvas');
